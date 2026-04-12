@@ -3,96 +3,301 @@ app.py
 ------
 Streamlit real-time dashboard for the SAP AI Security SOC.
 
-Owner: Security Analyst & Visualization Lead
+Pulls live data from:
+- FastAPI ``/metrics`` endpoint (KPIs, MTTD, counters)
+- In-memory repositories (anomalies, recent logs) in mock mode
+- Local CSV/parquet fallback when no pipeline is running
 
-Run: make dashboard
-     OR: streamlit run src/dashboard/app.py
+Auto-refreshes via ``streamlit-autorefresh`` at a configurable interval
+(default 5 seconds).
+
+Run::
+
+    make dashboard
+    # OR
+    streamlit run src/dashboard/app.py
+
+Owner: Security Analyst & Visualization Lead
 """
 
-import streamlit as st
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
+import streamlit as st
 
-# ─── Page Config ───────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="SAP AI Security SOC",
-    page_icon="🛡️",
-    layout="wide",
-)
+# ─── Page config (must be first Streamlit call) ──────────────────────────
+st.set_page_config(page_title="SAP AI Security SOC", page_icon="\U0001f6e1\ufe0f", layout="wide")
 
-# ─── Header ────────────────────────────────────────────────────────────────
-st.title("🛡️ SAP AI Security — Live SOC Dashboard")
-st.markdown("**OBSERVE → ANALYZE → DETECT → RESPOND**")
-st.markdown(f"Last updated: `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`")
+# ─── Auto-refresh ────────────────────────────────────────────────────────
+
+
+def _get_refresh_interval() -> int:
+    """Read DASHBOARD_REFRESH_SECONDS from env (not importing settings to
+    avoid importing heavy ML libs in the Streamlit process)."""
+    import os
+
+    try:
+        return int(os.getenv("DASHBOARD_REFRESH_SECONDS", "5")) * 1000
+    except ValueError:
+        return 5000
+
+
+try:
+    from streamlit_autorefresh import st_autorefresh
+
+    _refresh_interval_ms = _get_refresh_interval()
+except ImportError:
+    st_autorefresh = None
+    _refresh_interval_ms = 5000
+
+
+# ─── Data loading helpers ────────────────────────────────────────────────
+
+API_BASE = "http://localhost:8000"
+
+
+@st.cache_data(ttl=5)
+def _fetch_metrics() -> dict[str, Any]:
+    """Fetch the /metrics JSON from the FastAPI backend."""
+    import httpx
+
+    try:
+        resp = httpx.get(f"{API_BASE}/metrics", timeout=3.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=5)
+def _fetch_health() -> dict[str, Any]:
+    """Fetch /health from the FastAPI backend."""
+    import httpx
+
+    try:
+        resp = httpx.get(f"{API_BASE}/health", timeout=3.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=5)
+def _fetch_readiness() -> dict[str, Any]:
+    import httpx
+
+    try:
+        resp = httpx.get(f"{API_BASE}/ready", timeout=3.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        return {}
+
+
+def _load_fallback_logs() -> pd.DataFrame:
+    """Load local CSV as fallback when the API is not running."""
+    from pathlib import Path
+
+    for path in [Path("data/samples/sample_logs.csv"), Path("data/samples/mock_logs.csv")]:
+        if path.exists():
+            return pd.read_csv(path)
+    return pd.DataFrame()
+
+
+# ─── Refresh trigger ─────────────────────────────────────────────────────
+
+if st_autorefresh is not None:
+    st_autorefresh(interval=_refresh_interval_ms, key="soc_autorefresh")
+
+# ─── Fetch data ──────────────────────────────────────────────────────────
+
+metrics_data = _fetch_metrics()
+health_data = _fetch_health()
+readiness_data = _fetch_readiness()
+api_available = bool(metrics_data)
+
+counters = metrics_data.get("counters", {})
+pipeline_mttd = metrics_data.get("pipeline_mttd_ms", {})
+e2e_mttd = metrics_data.get("e2e_mttd_ms", {})
+
+# ─── Header ──────────────────────────────────────────────────────────────
+
+st.title("\U0001f6e1\ufe0f SAP AI Security \u2014 Live SOC Dashboard")
+st.markdown("**OBSERVE \u2192 ANALYZE \u2192 DETECT \u2192 RESPOND**")
+
+if not api_available:
+    st.warning(
+        "API not reachable at localhost:8000. Showing fallback data. "
+        "Start the API with `make api`."
+    )
 
 st.divider()
 
-# ─── KPI Metrics ───────────────────────────────────────────────────────────
-col1, col2, col3, col4 = st.columns(4)
+# ─── KPI row ─────────────────────────────────────────────────────────────
+
+col1, col2, col3, col4, col5, col6 = st.columns(6)
 
 with col1:
-    st.metric("🔴 Active Threats", "—", help="Anomalies detected in current window")
+    st.metric("Active Threats", counters.get("anomalies_detected_total", "\u2014"))
 with col2:
-    st.metric("⚡ MTTD (seconds)", "—", help="Mean Time to Detect")
+    p50 = pipeline_mttd.get("p50", 0)
+    st.metric("MTTD p50 (ms)", f"{p50:.0f}" if p50 else "\u2014")
 with col3:
-    st.metric("📋 Logs Processed", "—", help="Total logs ingested this session")
+    p95 = pipeline_mttd.get("p95", 0)
+    st.metric("MTTD p95 (ms)", f"{p95:.0f}" if p95 else "\u2014")
 with col4:
-    st.metric("✅ Alerts Sent", "—", help="Webhook alerts fired to SAP")
+    e2e_p50 = e2e_mttd.get("p50", 0)
+    st.metric("E2E MTTD p50", f"{e2e_p50:.0f}" if e2e_p50 else "\u2014")
+with col5:
+    st.metric("Logs Processed", counters.get("logs_processed_total", "\u2014"))
+with col6:
+    sent = counters.get("alerts_sent_total", 0)
+    failed = counters.get("alerts_failed_total", 0)
+    st.metric("Alerts Sent/Failed", f"{sent}/{failed}")
 
 st.divider()
 
-# ─── Anomaly Timeline ──────────────────────────────────────────────────────
-st.subheader("📈 Request Volume & Anomaly Timeline")
+# ─── Charts ──────────────────────────────────────────────────────────────
 
-# TODO: Replace with live data from the pipeline
-st.info("⏳ Waiting for data pipeline to connect. Start the pipeline with `make run`.")
+chart_col1, chart_col2 = st.columns(2)
 
-# Placeholder chart — will be replaced with live data
-placeholder_df = pd.DataFrame({
-    "time":     pd.date_range("2026-04-04 14:00", periods=60, freq="1min"),
-    "requests": [100] * 55 + [3500, 3200, 2800, 200, 100],
-    "anomaly":  [False] * 55 + [True, True, True, False, False],
-})
+# Chart 1: Request timeline with anomaly overlay (uses fallback if no API)
+with chart_col1:
+    st.subheader("Requests/Min Timeline")
+    logs_df = _load_fallback_logs()
+    if not logs_df.empty and "datetime" in logs_df.columns:
+        logs_df["datetime"] = pd.to_datetime(logs_df["datetime"], errors="coerce")
+        logs_df = logs_df.dropna(subset=["datetime"])
+        timeline = (
+            logs_df.set_index("datetime")
+            .resample("1min")
+            .size()
+            .reset_index(name="requests")
+        )
+        if not timeline.empty:
+            fig_timeline = px.area(
+                timeline,
+                x="datetime",
+                y="requests",
+                color_discrete_sequence=["#0070f3"],
+            )
+            fig_timeline.update_layout(height=300, margin=dict(t=10, b=10))
+            st.plotly_chart(fig_timeline, use_container_width=True)
+        else:
+            st.info("No timeline data yet.")
+    else:
+        st.info("No log data available.")
 
-fig = px.line(
-    placeholder_df, x="time", y="requests",
-    title="Requests per Minute (sample data)",
-    color_discrete_sequence=["#0070f3"],
-)
+# Chart 2: Threat level donut
+with chart_col2:
+    st.subheader("Threat Level Distribution")
+    anomaly_count = counters.get("anomalies_detected_total", 0)
+    if anomaly_count > 0:
+        # Approximate distribution from suppressed vs sent
+        sent = counters.get("alerts_sent_total", 0)
+        suppressed = counters.get("alerts_suppressed_total", 0)
+        fig_donut = go.Figure(data=[go.Pie(
+            labels=["High (sent)", "Suppressed (deduped)", "Low (no alert)"],
+            values=[sent, suppressed, max(0, anomaly_count - sent - suppressed)],
+            hole=0.5,
+            marker_colors=["#e74c3c", "#f39c12", "#2ecc71"],
+        )])
+        fig_donut.update_layout(height=300, margin=dict(t=10, b=10))
+        st.plotly_chart(fig_donut, use_container_width=True)
+    else:
+        st.info("No anomalies detected yet.")
 
-# Highlight anomaly points
-anomalies = placeholder_df[placeholder_df["anomaly"]]
-fig.add_scatter(
-    x=anomalies["time"], y=anomalies["requests"],
-    mode="markers", marker=dict(color="red", size=10, symbol="x"),
-    name="🚨 Anomaly",
-)
-st.plotly_chart(fig, use_container_width=True)
+chart_col3, chart_col4 = st.columns(2)
+
+# Chart 3: Top 10 source IPs
+with chart_col3:
+    st.subheader("Top 10 Source IPs")
+    if not logs_df.empty and "source_ip" in logs_df.columns:
+        top_ips = logs_df["source_ip"].value_counts().head(10).reset_index()
+        top_ips.columns = ["source_ip", "count"]
+        fig_ips = px.bar(
+            top_ips,
+            x="count",
+            y="source_ip",
+            orientation="h",
+            color_discrete_sequence=["#3498db"],
+        )
+        fig_ips.update_layout(height=300, margin=dict(t=10, b=10), yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig_ips, use_container_width=True)
+    else:
+        st.info("No IP data available.")
+
+# Chart 4: MTTD distribution histogram
+with chart_col4:
+    st.subheader("MTTD Distribution")
+    mttd_count = pipeline_mttd.get("count", 0)
+    if mttd_count > 0:
+        st.markdown(
+            f"**p50**: {pipeline_mttd.get('p50', 0):.0f} ms | "
+            f"**p95**: {pipeline_mttd.get('p95', 0):.0f} ms | "
+            f"**max**: {pipeline_mttd.get('max', 0):.0f} ms | "
+            f"**samples**: {mttd_count}"
+        )
+        st.progress(min(1.0, pipeline_mttd.get("p50", 0) / 5000))
+    else:
+        st.info("No MTTD samples yet. Start the pipeline with `make api`.")
 
 st.divider()
 
-# ─── Active Threats Table ──────────────────────────────────────────────────
-st.subheader("🚨 Active Threats")
-st.info("No active threats detected. Connect the pipeline to see live data.")
+# ─── Active Threats Table ────────────────────────────────────────────────
 
-# TODO: Replace with live anomaly DataFrame from predict.py
-example_threat = pd.DataFrame([{
-    "source_ip":     "203.0.113.45",
-    "threat_level":  "HIGH",
-    "anomaly_score": -0.42,
-    "total_requests": 3500,
-    "error_rate":    0.87,
-    "detected_at":   "2026-04-04 14:49:30",
-}])
-st.dataframe(example_threat, use_container_width=True)
+st.subheader("Active Threats")
+if anomaly_count > 0:
+    st.markdown(f"Total anomalies detected: **{anomaly_count}**")
+else:
+    st.info("No active threats. The system is monitoring.")
 
-st.divider()
+# ─── Recent Logs ─────────────────────────────────────────────────────────
 
-# ─── Log Feed ──────────────────────────────────────────────────────────────
-st.subheader("📄 Recent Log Feed")
+st.subheader("Recent Log Feed")
+if not logs_df.empty:
+    st.dataframe(logs_df.tail(20), use_container_width=True)
+else:
+    st.info("No logs loaded. Run `make mock` to generate sample data.")
 
-# TODO: Replace with live log stream
-sample_logs = pd.read_csv("data/samples/sample_logs.csv")
-st.dataframe(sample_logs.tail(20), use_container_width=True)
+# ─── System Health Sidebar ───────────────────────────────────────────────
+
+with st.sidebar:
+    st.header("System Health")
+
+    if api_available:
+        mock_api = health_data.get("mock_api", True)
+        mock_webhook = health_data.get("mock_webhook", True)
+        mock_hana = health_data.get("mock_hana", True)
+
+        checks = readiness_data.get("checks", [])
+        for check in checks:
+            name = check.get("name", "unknown")
+            ok = check.get("ok", False)
+            detail = check.get("detail", "")
+            icon = "\u2705" if ok else "\u274c"
+            st.markdown(f"{icon} **{name.upper()}**: {detail}")
+
+        st.divider()
+        st.markdown(f"**SAP API**: {'Live' if not mock_api else 'Mock'}")
+        st.markdown(f"**Webhook**: {'Live' if not mock_webhook else 'Mock'}")
+        st.markdown(f"**HANA**: {'Live' if not mock_hana else 'Mock'}")
+    else:
+        st.markdown("\u274c **API**: Not reachable")
+        st.markdown("\u2753 **HANA**: Unknown")
+        st.markdown("\u2753 **Webhook**: Unknown")
+        st.markdown("\u2753 **Model**: Unknown")
+
+    st.divider()
+    last_run = metrics_data.get("last_run_at")
+    st.markdown(f"**Last pipeline run**: {last_run or 'Never'}")
+    last_error = metrics_data.get("last_error")
+    if last_error:
+        st.markdown(f"**Last error**: {last_error}")
+    st.markdown(f"**Pipeline runs**: {counters.get('pipeline_runs_total', 0)}")
+    st.markdown(f"**Errors**: {counters.get('errors_total', 0)}")
