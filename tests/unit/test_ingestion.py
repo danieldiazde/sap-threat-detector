@@ -1,41 +1,49 @@
 """
 test_ingestion.py
 -----------------
-Unit tests for the SAP log fetcher and parser.
-Owner: Data Architect & Backend Developer
+Unit tests for the SAP log fetcher.
 """
 
-import pytest
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, patch
+
 import pandas as pd
-from unittest.mock import patch, AsyncMock
+import pytest
 
 from src.ingestion.sap_log_fetcher import _fetch_mock_logs, fetch_logs
 
 
 class TestMockFetcher:
-    def test_mock_logs_returns_dataframe(self):
+    def test_returns_dataframe(self):
         df = _fetch_mock_logs()
         assert isinstance(df, pd.DataFrame)
 
-    def test_mock_logs_has_expected_columns(self):
+    def test_has_expected_columns(self):
         df = _fetch_mock_logs()
-        expected_cols = ["datetime", "source_ip", "event_description", "status"]
-        for col in expected_cols:
+        for col in ("datetime", "source_ip", "event_description", "status"):
             assert col in df.columns, f"Missing column: {col}"
 
-    def test_mock_logs_not_empty(self):
+    def test_not_empty(self):
         df = _fetch_mock_logs()
         assert len(df) > 0
+
+    def test_has_ingested_at(self):
+        df = _fetch_mock_logs()
+        assert "ingested_at" in df.columns
 
 
 class TestFetchLogs:
     @pytest.mark.asyncio
-    async def test_fetch_logs_mock_mode(self):
-        """In mock mode (no SAP_API_URL), should return mock data."""
+    async def test_mock_mode_returns_data(self):
         df = await fetch_logs()
         assert isinstance(df, pd.DataFrame)
+        assert "ingested_at" in df.columns
 
-    # TODO: Add real API tests after April 13
-    # @pytest.mark.asyncio
-    # async def test_fetch_logs_real_api(self):
-    #     ...
+    @pytest.mark.asyncio
+    async def test_ingested_at_is_datetime(self):
+        df = await fetch_logs()
+        if not df.empty:
+            val = df["ingested_at"].iloc[0]
+            from datetime import datetime
+            assert isinstance(val, datetime)

@@ -1,115 +1,128 @@
 """
 test_anomaly_detection.py
 -------------------------
-Model quality tests — precision, recall, MTTD.
+Model quality tests — IsolationForest + DBSCAN twin, MTTD, false-positive.
 These tests are critical: Operational Efficiency is 40% of the grade.
-
-Owner: AI & Data Science Specialist
-
-Run: make test-model
 """
 
-import pytest
-import pandas as pd
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
 import numpy as np
+import pandas as pd
+import pytest
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 
-from src.model.features import extract_features
+from src.model.dbscan_detector import DBSCANDetector
+from src.model.features import extract_features, feature_matrix
+from src.model.schema import FEATURE_COLUMNS
 
 
-# ─── Synthetic test data ───────────────────────────────────────────────────
-
-def make_normal_logs(n=100) -> pd.DataFrame:
-    """Simulate normal traffic — low volume, low error rate."""
-    rows = []
-    for i in range(n):
-        rows.append({
-            "datetime": f"2026-04-04 14:{i//60:02d}:{i%60:02d}",
-            "source_ip": f"10.10.1.{(i % 50) + 1}",
-            "port_service": "TCP/80",
-            "event_description": "GET /index.html HTTP/1.1",
-            "status": "200",
-            "log_type": "access",
-        })
-    return pd.DataFrame(rows)
-
-
-def make_attack_logs(attacker_ip="203.0.113.99", n=500) -> pd.DataFrame:
-    """Simulate a brute-force attack — high volume, high error rate from one IP."""
-    rows = []
-    for i in range(n):
-        rows.append({
-            "datetime": f"2026-04-04 15:00:{i%60:02d}",
-            "source_ip": attacker_ip,
-            "port_service": "TCP/22",
-            "event_description": "Failed login attempt: user 'root'",
-            "status": "DENIED",
-            "log_type": "security",
-        })
-    return pd.DataFrame(rows)
-
-
-# ─── Tests ─────────────────────────────────────────────────────────────────
-
-class TestAnomalyDetection:
-    @pytest.fixture
-    def trained_model(self):
-        """Train a fresh model on normal + attack data."""
-        normal  = make_normal_logs(200)
-        attack  = make_attack_logs(n=50)
-        all_logs = pd.concat([normal, attack], ignore_index=True)
-
-        features = extract_features(all_logs)
-        X = features[["total_requests", "error_rate", "post_ratio",
-                       "unique_paths", "status_4xx_count", "status_5xx_count",
-                       "request_rate_zscore"]].fillna(0).values
-
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
-
-        model = IsolationForest(contamination=0.05, random_state=42)
-        model.fit(X_scaled)
-        return model, scaler, features
-
-    def test_attacker_ip_gets_lower_score(self, trained_model):
-        """The attacking IP should have a lower anomaly score than normal IPs."""
-        model, scaler, features = trained_model
-
-        X = features[["total_requests", "error_rate", "post_ratio",
-                       "unique_paths", "status_4xx_count", "status_5xx_count",
-                       "request_rate_zscore"]].fillna(0).values
+class TestIsolationForestDetection:
+    def test_attacker_ip_lower_score(self, trained_isolation_forest):
+        model, scaler, features_df = trained_isolation_forest
+        X = feature_matrix(features_df)
         X_scaled = scaler.transform(X)
         scores = model.decision_function(X_scaled)
-        features = features.copy()
-        features["score"] = scores
+        features_df = features_df.copy()
+        features_df["score"] = scores
 
-        attacker_scores = features[features["source_ip"] == "203.0.113.99"]["score"]
-        normal_scores   = features[features["source_ip"] != "203.0.113.99"]["score"]
+        attacker = features_df[features_df["source_ip"] == "203.0.113.99"]["score"]
+        normal = features_df[features_df["source_ip"] != "203.0.113.99"]["score"]
 
-        if len(attacker_scores) > 0 and len(normal_scores) > 0:
-            assert attacker_scores.mean() < normal_scores.mean(), \
-                "Attacker IP should have lower anomaly score than normal IPs"
+        if len(attacker) > 0 and len(normal) > 0:
+            assert attacker.mean() < normal.mean(), \
+                "Attacker IP should have lower anomaly score"
 
-    def test_model_detects_high_volume_ip(self, trained_model):
-        """An IP with 10x normal request volume should be flagged."""
-        model, scaler, _ = trained_model
-
-        # Simulate a high-volume IP
-        spike_features = pd.DataFrame([{
-            "total_requests": 5000,
-            "error_rate": 0.9,
-            "post_ratio": 0.1,
-            "unique_paths": 2,
-            "status_4xx_count": 4500,
-            "status_5xx_count": 0,
-            "request_rate_zscore": 8.0,
-        }])
-
-        X_scaled = scaler.transform(spike_features.values)
+    def test_spike_ip_flagged(self, trained_isolation_forest):
+        model, scaler, _ = trained_isolation_forest
+        spike = pd.DataFrame([{col: 0.0 for col in FEATURE_COLUMNS}])
+        spike["total_requests"] = 5000
+        spike["error_rate"] = 0.9
+        spike["status_4xx_count"] = 4500
+        spike["request_rate_zscore"] = 8.0
+        X_scaled = scaler.transform(spike[list(FEATURE_COLUMNS)].values)
         score = model.decision_function(X_scaled)[0]
-        assert score < 0, f"Spike IP should be anomalous, got score={score:.3f}"
+        assert score < 0, f"Spike IP should be anomalous, got {score:.3f}"
 
-    # TODO: Add precision/recall test once labeled SAP data is available (April 13)
-    # def test_precision_above_threshold(self): ...
-    # def test_mean_time_to_detect(self): ...
+
+class TestDBSCANDetection:
+    def test_attacker_ip_lower_score(self, trained_dbscan):
+        detector, scaler, features_df = trained_dbscan
+        X = feature_matrix(features_df)
+        X_scaled = scaler.transform(X)
+        scores = detector.decision_function(X_scaled)
+        features_df = features_df.copy()
+        features_df["score"] = scores
+
+        attacker = features_df[features_df["source_ip"] == "203.0.113.99"]["score"]
+        normal = features_df[features_df["source_ip"] != "203.0.113.99"]["score"]
+
+        if len(attacker) > 0 and len(normal) > 0:
+            assert attacker.mean() < normal.mean(), \
+                "DBSCAN: attacker IP should have lower score"
+
+    def test_dbscan_decision_function_shape(self, trained_dbscan):
+        detector, scaler, features_df = trained_dbscan
+        X = feature_matrix(features_df)
+        X_scaled = scaler.transform(X)
+        scores = detector.decision_function(X_scaled)
+        assert scores.shape == (len(features_df),)
+
+
+class TestFalsePositives:
+    def test_legitimate_multi_ip_spike_not_all_flagged(self):
+        """
+        Many IPs each making a moderate number of requests should not all
+        be flagged — only volume outliers should score anomalous.
+        """
+        # Create 50 normal IPs with 3-5 requests each, all HTTP 200
+        rows = []
+        for i in range(50):
+            ip = f"10.10.1.{i + 1}"
+            for j in range(np.random.randint(3, 6)):
+                rows.append({
+                    "datetime": f"2026-04-04 14:{j:02d}:00",
+                    "source_ip": ip,
+                    "port_service": "TCP/80",
+                    "event_description": "GET /index.html",
+                    "status": "200",
+                    "log_type": "access",
+                })
+        df = pd.DataFrame(rows)
+        features_df = extract_features(df)
+        X = feature_matrix(features_df)
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        model = IsolationForest(contamination=0.05, random_state=42)
+        model.fit(X_scaled)
+        scores = model.decision_function(X_scaled)
+        flagged_rate = (scores < 0).mean()
+        # Most IPs should NOT be flagged; accept up to 20% false-positive rate
+        assert flagged_rate < 0.2, f"Too many false positives: {flagged_rate:.0%}"
+
+
+class TestMTTDCalculation:
+    def test_predict_stamps_mttd(self, mixed_logs_df, tmp_model_registry):
+        """predict() must stamp pipeline_mttd_ms and e2e_mttd_ms."""
+        from src.model.predict import predict, reset_active_model
+        from src.model.train import train
+
+        features_df = extract_features(mixed_logs_df)
+        # Train and save a model into the tmp registry
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("src.model.train.registry", tmp_model_registry)
+            mp.setattr("src.model.predict.registry", tmp_model_registry)
+            report = train(features_df)
+            reset_active_model()
+
+            ingested_at = datetime(2026, 4, 4, 14, 0, 0, tzinfo=timezone.utc)
+            batch_min = datetime(2026, 4, 4, 13, 55, 0, tzinfo=timezone.utc)
+            scored = predict(features_df, ingested_at=ingested_at, batch_min_log_time=batch_min)
+
+        assert "pipeline_mttd_ms" in scored.columns
+        assert "e2e_mttd_ms" in scored.columns
+        assert (scored["pipeline_mttd_ms"] >= 0).all()
+        assert scored["e2e_mttd_ms"].iloc[0] is not None
