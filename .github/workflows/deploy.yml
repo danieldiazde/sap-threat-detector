@@ -1,0 +1,40 @@
+name: Deploy to SAP BTP
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Cloud Foundry CLI
+        run: |
+          curl -L "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v8" | tar -zx
+          sudo mv cf8 /usr/local/bin/cf
+
+      - name: Login to SAP BTP Cloud Foundry
+        run: |
+          cf login \
+            -a ${{ secrets.CF_API_ENDPOINT }} \
+            -u ${{ secrets.CF_USERNAME }} \
+            -p ${{ secrets.CF_PASSWORD }} \
+            -o ${{ secrets.CF_ORG }} \
+            -s ${{ secrets.CF_SPACE }}
+
+      - name: Deploy application
+        run: cf push -f infra/manifest.yml
+
+      - name: Set environment variables on CF
+        run: |
+          cf set-env sap-threat-detector SAP_API_URL "${{ secrets.SAP_API_URL }}"
+          cf set-env sap-threat-detector SAP_API_KEY "${{ secrets.SAP_API_KEY }}"
+          cf set-env sap-threat-detector SAP_WEBHOOK_URL "${{ secrets.SAP_WEBHOOK_URL }}"
+          cf set-env sap-threat-detector SAP_WEBHOOK_SECRET "${{ secrets.SAP_WEBHOOK_SECRET }}"
+          cf set-env sap-threat-detector HANA_HOST "${{ secrets.HANA_HOST }}"
+          cf set-env sap-threat-detector HANA_USER "${{ secrets.HANA_USER }}"
+          cf set-env sap-threat-detector HANA_PASSWORD "${{ secrets.HANA_PASSWORD }}"
+          cf restage sap-threat-detector

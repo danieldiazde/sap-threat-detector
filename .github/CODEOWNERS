@@ -1,0 +1,25 @@
+# =============================================
+# CODEOWNERS — Auto-assign reviewers by module
+# Update GitHub usernames after team is set up
+# =============================================
+
+# Default — PM reviews everything
+*                           @pm-username
+
+# ML model — AI & Data Science Specialist
+src/model/                  @ml-specialist-username
+
+# Ingestion & storage — Data Architect & Backend Dev
+src/ingestion/              @data-architect-username
+src/storage/                @data-architect-username
+
+# Alerting — Cloud Integration Engineer
+src/alerting/               @cloud-engineer-username
+
+# Infra — Cloud Integration Engineer
+infra/                      @cloud-engineer-username
+.github/workflows/          @cloud-engineer-username
+
+# Dashboard & docs — Security Analyst & Visualization Lead
+src/dashboard/              @security-analyst-username
+docs/                       @security-analyst-username

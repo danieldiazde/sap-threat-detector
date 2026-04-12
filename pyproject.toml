@@ -1,0 +1,64 @@
+[project]
+name = "sap-threat-detector"
+version = "0.1.0"
+description = "SAP AI Security — real-time anomaly detection for security logs (TEC × SAP Hackathon)"
+requires-python = ">=3.11"
+readme = "README.md"
+
+# Runtime dependencies live in requirements.txt (the CF buildpack reads it
+# directly). This pyproject.toml is for tooling configuration only.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501",  # line-length handled by formatter
+    "B008",  # function calls in default args (FastAPI Depends pattern)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]  # allow asserts without message in tests
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (select with '-m slow')",
+    "integration: end-to-end pipeline tests",
+    "model: model quality tests",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:pkg_resources",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["hdbcli.*", "streamlit.*", "plotly.*", "keras.*"]
+ignore_missing_imports = true

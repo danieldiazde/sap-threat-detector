@@ -1,0 +1,78 @@
+# ===========================
+# Environment & Secrets
+# ===========================
+.env
+*.env
+.env.*
+!.env.example
+
+# ===========================
+# Python
+# ===========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+env/
+venv/
+
+# ===========================
+# Notebooks
+# ===========================
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ===========================
+# ML Artifacts — never commit models directly
+# ===========================
+*.pkl
+*.joblib
+*.pt
+*.pth
+*.onnx
+*.h5
+*.keras
+mlruns/
+wandb/
+models/saved/
+
+# ===========================
+# Data — CRITICAL: never commit raw logs
+# SAP will deprecate credentials if raw data is exposed
+# ===========================
+data/raw/
+*.log
+*.csv
+!data/samples/sample_logs.csv  # Only the mock sample is allowed
+
+# ===========================
+# SAP BTP / Cloud Foundry
+# ===========================
+.cfignore
+*.mtar
+
+# ===========================
+# Infra
+# ===========================
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
+# ===========================
+# OS
+# ===========================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ===========================
+# IDE
+# ===========================
+.vscode/
+.idea/
+*.iml
