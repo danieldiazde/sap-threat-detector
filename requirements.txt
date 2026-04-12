@@ -1,33 +1,35 @@
-# ===========================
-# Core Data & ML (mandatory per SAP)
-# ===========================
-numpy>=1.26.0
-pandas>=2.2.0
-scikit-learn>=1.4.0
-keras>=3.0.0
+# =====================================================
+# SAP AI Security — runtime dependencies
+# Cloud Foundry's python_buildpack reads this file directly.
+# Pin lower AND upper bounds on every package for reproducible deploys.
+# =====================================================
 
-# ===========================
-# API & HTTP
-# ===========================
-httpx>=0.27.0          # Async HTTP client for SAP API ingestion
-fastapi>=0.111.0       # Internal orchestration API
-uvicorn>=0.30.0        # ASGI server for FastAPI
+# ─── Core data + ML (mandated by SAP) ───────────────────────────────────
+numpy>=1.26,<2.3
+pandas>=2.2,<2.4
+scikit-learn>=1.4,<1.7
+joblib>=1.3,<2                # model persistence (replaces pickle)
 
-# ===========================
-# SAP HANA Connection
-# ===========================
-hdbcli>=2.19.0         # Official SAP HANA Python client
+# ─── Async HTTP + API ───────────────────────────────────────────────────
+httpx>=0.27,<0.29             # async HTTP for fetcher + webhook
+fastapi>=0.111,<0.116         # internal orchestration API
+uvicorn[standard]>=0.30,<0.33 # ASGI server on Cloud Foundry
+tenacity>=8.2,<9              # retry decorator
+orjson>=3.10,<4               # fast JSON serialization
 
-# ===========================
-# Dashboard
-# ===========================
-streamlit>=1.35.0
-plotly>=5.22.0
+# ─── SAP HANA ────────────────────────────────────────────────────────────
+hdbcli>=2.19,<3               # official SAP HANA Python client
 
-# ===========================
-# Dev & Testing
-# ===========================
-pytest>=8.2.0
-pytest-asyncio>=0.23.0
-ruff>=0.4.0            # Linter
-python-dotenv>=1.0.0   # Load .env file
+# ─── Dashboard ───────────────────────────────────────────────────────────
+streamlit>=1.35,<1.40
+streamlit-autorefresh>=1.0,<2
+plotly>=5.22,<6
+
+# ─── Observability ───────────────────────────────────────────────────────
+python-json-logger>=2.0,<3    # optional JSON log formatter
+
+# ─── Config + dev tooling ────────────────────────────────────────────────
+python-dotenv>=1.0,<2
+pytest>=8.2,<9
+pytest-asyncio>=0.23,<1
+ruff>=0.4,<0.8

@@ -9,7 +9,7 @@ import pytest
 import pandas as pd
 import numpy as np
 
-from src.model.features import extract_features, _parse_columns
+from src.model.features import extract_features
 
 
 SAMPLE_LOGS = pd.DataFrame([

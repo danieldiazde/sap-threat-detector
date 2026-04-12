@@ -1,0 +1,10 @@
+# =====================================================
+# Optional ML extras — not installed on Cloud Foundry.
+# Keras is kept here in case we want to experiment with a deep
+# autoencoder after the April 13 baseline is validated. Until
+# then, the primary model is IsolationForest (scikit-learn) and
+# the secondary is DBSCAN.
+# =====================================================
+
+keras>=3.0,<4
+tensorflow>=2.16,<2.20        # required by keras 3
