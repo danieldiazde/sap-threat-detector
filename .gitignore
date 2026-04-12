@@ -76,3 +76,4 @@ Thumbs.db
 .vscode/
 .idea/
 *.iml
+*:Zone.Identifier
