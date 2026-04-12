@@ -16,6 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from src.common.metrics import MetricsRegistry
+from src.model import train as train_module
 from src.model.versioning import ModelRegistry
 from src.pipeline import Pipeline
 from src.storage.repositories import AnomalyRepository, LogRepository
@@ -45,7 +46,7 @@ class TestPipelineE2E:
 
         tmp_registry = ModelRegistry(root=tmp_path / "models")
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr("src.model.train.registry", tmp_registry)
+            mp.setattr(train_module, "registry", tmp_registry)
             report = train(features_df)
         assert report["version_tag"] is not None
 
