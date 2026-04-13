@@ -1,0 +1,15 @@
+datetime,source_ip,port_service,event_description,status,log_type
+2026-04-04 14:45:01,192.168.1.105,TCP/22,Failed login attempt: user 'root',DENIED,security
+2026-04-04 14:45:05,192.168.1.105,TCP/22,Failed login attempt: user 'admin',DENIED,security
+2026-04-04 14:45:09,192.168.1.105,TCP/22,Failed login attempt: user 'postgres',DENIED,security
+2026-04-04 14:48:12,203.0.113.45,TCP/80,Directory scan: GET /phpmyadmin/,404 NOT FOUND,security
+2026-04-04 14:48:15,203.0.113.45,TCP/80,Directory scan: GET /admin/,404 NOT FOUND,security
+2026-04-04 14:48:18,203.0.113.45,TCP/80,Directory scan: GET /wp-login.php,404 NOT FOUND,security
+2026-04-04 14:49:30,203.0.113.45,TCP/443,WAF Alert: Possible SQL injection UNION SELECT,BLOCKED,security
+2026-04-04 14:50:15,10.0.0.50,TCP/3389,Multiple authentication attempts (Brute force),ACCOUNT LOCKED,security
+2026-04-04 14:52:00,198.51.100.12,ICMP,Repetitive ping scan (Echo Request),DROPPED,security
+2026-04-04 14:55:01,10.10.1.1,TCP/80,GET /index.html HTTP/1.1,200,access
+2026-04-04 14:55:02,10.10.1.2,TCP/80,GET /assets/logo.png HTTP/1.1,200,access
+2026-04-04 14:55:03,10.10.1.3,TCP/443,GET /api/v1/users HTTP/1.1,200,access
+2026-04-04 14:55:04,10.10.1.4,TCP/443,POST /api/v1/login HTTP/1.1,200,access
+2026-04-04 14:55:05,10.10.1.5,TCP/80,GET /about.html HTTP/1.1,200,access
