@@ -37,7 +37,12 @@ venv/
 *.keras
 mlruns/
 wandb/
-models/saved/
+models/
+
+# ===========================
+# Reports — incident reports may contain IPs / anomaly data
+# ===========================
+reports/
 
 # ===========================
 # Data — CRITICAL: never commit raw logs
@@ -46,7 +51,10 @@ models/saved/
 data/raw/
 *.log
 *.csv
-!data/samples/sample_logs.csv  # Only the mock sample is allowed
+# Re-include the mock sample (negation must follow *.csv)
+!data/
+!data/samples/
+!data/samples/sample_logs.csv
 
 # ===========================
 # SAP BTP / Cloud Foundry

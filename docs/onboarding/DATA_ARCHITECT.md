@@ -44,7 +44,7 @@ git checkout dev
 git checkout -b feat/data-architect
 
 # Create virtual environment
-python -m venv .venv
+python3 -m venv .venv        # Use python3 if 'python' is not found
 source .venv/bin/activate   # Mac/Linux
 # .venv\Scripts\activate    # Windows
 
@@ -154,6 +154,7 @@ This file is intentionally isolated — when the real SAP API format is revealed
 ### Installation
 
 ```bash
+# Prerequisite: Node.js must be installed (https://nodejs.org — LTS version)
 # Install Claude Code (one time)
 npm install -g @anthropic-ai/claude-code
 
@@ -195,8 +196,8 @@ CURRENT STATE:
   for the 40% MTTD grade)
 
 CODING STANDARDS:
-- No print() anywhere in src/ — use: from src.common.logging import get_logger
-  then logger = get_logger(__name__)
+- No print() in src/ — use: from src.common.logging import get_logger
+  then logger = get_logger(__name__). Scripts in scripts/ may use print() for CLI output.
 - All config via: from src.common.config import settings
 - All DB operations via repositories (never raw SQL outside repositories)
 - Use asyncio.to_thread() for hdbcli calls (it's a sync driver)

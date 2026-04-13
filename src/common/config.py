@@ -187,6 +187,9 @@ class Settings:
             mttd_high_threshold_ms=_env_int(
                 "MTTD_HIGH_THRESHOLD_MS", DEFAULT_MTTD_HIGH_THRESHOLD_MS
             ),
+            incident_report_dir=Path(
+                _env_str("INCIDENT_REPORT_DIR", "reports/incidents")
+            ),
         )
 
 

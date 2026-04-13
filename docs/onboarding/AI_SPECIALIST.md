@@ -48,7 +48,7 @@ git checkout dev
 git checkout -b feat/ai-specialist
 
 # Create virtual environment
-python -m venv .venv
+python3 -m venv .venv        # Use python3 if 'python' is not found
 source .venv/bin/activate   # Mac/Linux
 # .venv\Scripts\activate    # Windows
 
@@ -171,6 +171,7 @@ A Jupyter notebook for exploring data visually. It loads sample logs, shows basi
 ### Installation
 
 ```bash
+# Prerequisite: Node.js must be installed (https://nodejs.org — LTS version)
 # Install Claude Code (one time)
 npm install -g @anthropic-ai/claude-code
 
@@ -215,8 +216,8 @@ CURRENT STATE:
 - Models directory may be empty — run "make train" to create a model
 
 CODING STANDARDS:
-- No print() anywhere in src/ — use: from src.common.logging import get_logger
-  then logger = get_logger(__name__)
+- No print() in src/ — use: from src.common.logging import get_logger
+  then logger = get_logger(__name__). Scripts in scripts/ may use print() for CLI output.
 - All config via: from src.common.config import settings
 - Model persistence: joblib only, never pickle
 - FEATURE_COLUMNS is defined in src/model/schema.py — never redefine it

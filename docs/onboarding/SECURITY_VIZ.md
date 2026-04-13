@@ -44,7 +44,7 @@ git checkout dev
 git checkout -b feat/security-viz
 
 # Create virtual environment
-python -m venv .venv
+python3 -m venv .venv        # Use python3 if 'python' is not found
 source .venv/bin/activate   # Mac/Linux
 # .venv\Scripts\activate    # Windows
 
@@ -155,6 +155,7 @@ A Jupyter notebook for exploratory data analysis. Cells: load data → basic sta
 ### Installation
 
 ```bash
+# Prerequisite: Node.js must be installed (https://nodejs.org — LTS version)
 # Install Claude Code (one time)
 npm install -g @anthropic-ai/claude-code
 
@@ -197,8 +198,8 @@ CURRENT STATE:
 - Real data arrives April 13
 
 CODING STANDARDS:
-- No print() anywhere in src/ — use: from src.common.logging import get_logger
-  then logger = get_logger(__name__)
+- No print() in src/ — use: from src.common.logging import get_logger
+  then logger = get_logger(__name__). Scripts in scripts/ may use print() for CLI output.
 - All config via: from src.common.config import settings
 - Dashboard reads config via os.getenv() directly to avoid importing heavy ML libs
 - Type hints on every function, Google-style docstrings on public methods

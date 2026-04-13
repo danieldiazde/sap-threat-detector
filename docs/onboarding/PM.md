@@ -91,7 +91,7 @@ git clone https://github.com/danieldiazde/sap-threat-detector.git
 cd sap-threat-detector
 
 # Create virtual environment
-python -m venv .venv
+python3 -m venv .venv        # Use python3 if 'python' is not found
 source .venv/bin/activate   # Mac/Linux
 # .venv\Scripts\activate    # Windows
 
@@ -131,6 +131,7 @@ make dashboard
 ### Understanding any file with Claude Code
 
 ```bash
+# Prerequisite: Node.js must be installed (https://nodejs.org — LTS version)
 # Install Claude Code (one time)
 npm install -g @anthropic-ai/claude-code
 
@@ -167,6 +168,7 @@ Watch the response for `anomalies` — the suspicious IP should be flagged.
 ### Installation
 
 ```bash
+# Prerequisite: Node.js must be installed (https://nodejs.org — LTS version)
 npm install -g @anthropic-ai/claude-code
 cd sap-threat-detector
 claude

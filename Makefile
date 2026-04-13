@@ -51,14 +51,14 @@ test-model:
 # ─── Runtime ───────────────────────────────────────────────────────────────
 
 mock:
-	python -m scripts.generate_mock_logs --rows 5000 --attack-ratio 0.05 \
+	python3 -m scripts.generate_mock_logs --rows 5000 --attack-ratio 0.05 \
 	    --with-spikes --with-brute-force
 
 train:
-	python -m scripts.train_model
+	python3 -m scripts.train_model
 
 run:
-	python -m scripts.run_pipeline_local
+	python3 -m scripts.run_pipeline_local
 
 pipeline: run
 

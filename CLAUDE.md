@@ -38,7 +38,10 @@ Streamlit dashboard runs locally only, not on CF.
 
 ## Key Conventions
 
-- **No `print()`** — use `from src.common.logging import get_logger; logger = get_logger(__name__)`
+- **No `print()`** in `src/` — use `from src.common.logging import get_logger; logger = get_logger(__name__)`. Scripts in `scripts/` may use `print()` for CLI output.
+- **Import from direct modules, not `src.model`**:
+  `from src.model.train import train` (correct)
+  `from src.model import train` (WRONG — namespace conflict with re-exported function)
 - **No `os.getenv()`** outside `src/common/config.py` — import `settings` instead
 - **joblib** for model persistence, not pickle
 - **Settings dataclass** in `src/common/config.py` — frozen, loaded once from env
@@ -47,8 +50,9 @@ Streamlit dashboard runs locally only, not on CF.
 
 ## Branch Rules
 
-- Work on `dev`, never push directly to `main`
-- Commit after each phase: `git push origin dev`
+- Team members work on `feat/*` branches, PR into `dev`
+- Only PM merges `dev` into `main`
+- Never push directly to `main`
 
 ## Project Structure
 

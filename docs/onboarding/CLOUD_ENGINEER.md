@@ -46,7 +46,7 @@ git checkout dev
 git checkout -b feat/cloud-engineer
 
 # Create virtual environment
-python -m venv .venv
+python3 -m venv .venv        # Use python3 if 'python' is not found
 source .venv/bin/activate   # Mac/Linux
 # .venv\Scripts\activate    # Windows
 
@@ -160,6 +160,7 @@ Runs on push to `main` only. Steps: checkout → install CF CLI → login to SAP
 ### Installation
 
 ```bash
+# Prerequisite: Node.js must be installed (https://nodejs.org — LTS version)
 # Install Claude Code (one time)
 npm install -g @anthropic-ai/claude-code
 
@@ -203,8 +204,8 @@ CURRENT STATE:
 - CF deployment is configured but not yet deployed (Go Live: May 4)
 
 CODING STANDARDS:
-- No print() anywhere in src/ — use: from src.common.logging import get_logger
-  then logger = get_logger(__name__)
+- No print() in src/ — use: from src.common.logging import get_logger
+  then logger = get_logger(__name__). Scripts in scripts/ may use print() for CLI output.
 - All config via: from src.common.config import settings
 - All async code uses asyncio (no threads except for HANA connection pool)
 - Type hints on every function, Google-style docstrings on public methods
