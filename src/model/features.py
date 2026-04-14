@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from src.common.logging import get_logger
-from src.ingestion.log_parser import validate_schema
+from src.model.schema import REQUIRED_LOG_COLUMNS, InvalidLogSchemaError
 from src.model.schema import (
     BRUTE_FORCE_KEYWORDS,
     DENIED_STATUSES,
@@ -56,7 +56,9 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return _empty_feature_frame()
 
-    df = validate_schema(df)
+    missing = [c for c in REQUIRED_LOG_COLUMNS if c not in df.columns]
+    if missing:
+        raise InvalidLogSchemaError(missing=missing, available=list(df.columns))
     df = _enrich_raw(df)
 
     grouped = df.groupby("source_ip", sort=False)
