@@ -124,3 +124,21 @@ class InvalidLogSchemaError(ValueError):
             f"Log DataFrame is missing required columns: {missing}. "
             f"Got: {available}. Fix in src/ingestion/log_parser.py::normalize_columns."
         )
+
+
+def validate_schema(df: "pd.DataFrame") -> "pd.DataFrame":
+    """
+    Verify that *df* has the required columns.
+
+    Raises :class:`InvalidLogSchemaError` if any required column is missing.
+    Returns the DataFrame unchanged on success (for chainable use).
+    """
+    import pandas as pd  # local import to keep schema.py free of heavy deps at import time
+
+    if df.empty:
+        return df
+
+    missing = [c for c in REQUIRED_LOG_COLUMNS if c not in df.columns]
+    if missing:
+        raise InvalidLogSchemaError(missing=missing, available=list(df.columns))
+    return df

@@ -30,6 +30,7 @@ load_dotenv()
 # ─── Defaults (single source of truth) ─────────────────────────────────────
 
 DEFAULT_POLL_INTERVAL_SECONDS: Final[int] = 30
+DEFAULT_RETRAIN_EVERY_N_CYCLES: Final[int] = 480  # 480 × 30s = 4 hours
 DEFAULT_PAGE_SIZE: Final[int] = 100
 DEFAULT_MODEL_CONTAMINATION: Final[float] = 0.05
 DEFAULT_MODEL_CONTEXT_WINDOW_MINUTES: Final[int] = 60
@@ -109,6 +110,7 @@ class Settings:
     environment: str
     log_level: str
     poll_interval_seconds: int
+    retrain_every_n_cycles: int
 
     # --- Dashboard ---
     dashboard_refresh_seconds: int
@@ -180,6 +182,9 @@ class Settings:
             log_level=_env_str("LOG_LEVEL", "INFO"),
             poll_interval_seconds=_env_int(
                 "POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS
+            ),
+            retrain_every_n_cycles=_env_int(
+                "RETRAIN_EVERY_N_CYCLES", DEFAULT_RETRAIN_EVERY_N_CYCLES
             ),
             dashboard_refresh_seconds=_env_int(
                 "DASHBOARD_REFRESH_SECONDS", DEFAULT_DASHBOARD_REFRESH_SECONDS
