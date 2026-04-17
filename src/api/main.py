@@ -66,9 +66,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     logger.info("api.startup", extra={"environment": settings.environment})
 
-    # Storage
-    await pool.initialize()
-    await apply_schema()
+    # Storage — non-fatal: app boots even if HANA is temporarily unreachable
+    try:
+        await pool.initialize()
+        await apply_schema()
+    except Exception as exc:
+        logger.error("api.startup.hana_failed", extra={"error": str(exc)})
 
     # Pipeline
     _pipeline = Pipeline()

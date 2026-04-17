@@ -32,6 +32,7 @@ jobs:
           cf set-env sap-threat-detector SAP_WEBHOOK_URL "${{ secrets.SAP_WEBHOOK_URL }}"
           cf set-env sap-threat-detector SAP_WEBHOOK_SECRET "${{ secrets.SAP_WEBHOOK_SECRET }}"
           cf set-env sap-threat-detector HANA_HOST "${{ secrets.HANA_HOST }}"
+          cf set-env sap-threat-detector HANA_PORT "${{ secrets.HANA_PORT }}"
           cf set-env sap-threat-detector HANA_USER "${{ secrets.HANA_USER }}"
           cf set-env sap-threat-detector HANA_PASSWORD "${{ secrets.HANA_PASSWORD }}"
 
