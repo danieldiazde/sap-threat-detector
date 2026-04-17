@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "WebFetch(domain:sap-api-b1.679168.xyz)",
+      "Bash(gh:*)",
+      "Bash(PYTHONPATH=. python scripts/train_model.py --input data/samples/sample_logs.csv)",
+      "Bash(PYTHONPATH=. python scripts/train_model.py --data data/samples/sample_logs.csv)",
+      "Bash(git remote *)",
+      "Bash(GITHUB_TOKEN=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 gh secret set CF_API_ENDPOINT --body \"https://api.cf.us10-001.hana.ondemand.com\" --repo danieldiazde/sap-threat-detector)",
+      "Bash(GITHUB_TOKEN=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 gh secret set CF_ORG --body \"3492e3fdtrial\" --repo danieldiazde/sap-threat-detector)",
+      "Bash(GITHUB_TOKEN=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 gh secret set CF_SPACE --body \"dev\" --repo danieldiazde/sap-threat-detector)",
+      "Bash(GITHUB_TOKEN=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 gh secret set CF_USERNAME --body \"a01783438@tec.mx\" --repo danieldiazde/sap-threat-detector)",
+      "Bash(GITHUB_TOKEN=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 gh secret set CF_PASSWORD --body \"M3xicoMF10@\" --repo danieldiazde/sap-threat-detector)",
+      "Bash(GITHUB_TOKEN=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 gh secret *)",
+      "Bash(git checkout *)",
+      "Bash(git pull *)",
+      "Bash(git merge *)",
+      "Bash(git push *)",
+      "Bash(GITHUB_TOKEN=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 gh run *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'feat: add GET /anomalies endpoint for dashboard live threat data *)",
+      "Bash(git commit -m 'fix: use --no-start deploy pattern, capture CF logs on failure, increase startup timeout *)",
+      "Bash(git commit -m 'fix: use prod-only requirements to fix '\\\\''no space left on device'\\\\'' on CF *)",
+      "Bash(git commit -m 'fix: write alert_id and dedup_key back to anomaly record before DB insert *)",
+      "Bash(git commit -m 'fix: register model version to HANA after retrain; add live anomaly table to dashboard *)",
+      "Bash(ruff check *)",
+      "Bash(git commit -m ' *)",
+      "Bash(python3 -c \"import pandas as pd; print\\(pd.concat\\([]\\)\\)\")",
+      "Bash(cf app *)",
+      "Bash(curl *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(PYTHONPATH=. python scripts/count_hana_duplicates.py)",
+      "Bash(PYTHONPATH=. python scripts/delete_hana_duplicates.py)",
+      "Bash(cf logs *)",
+      "Bash(env)",
+      "Bash(make deploy *)"
+    ]
+  }
+}

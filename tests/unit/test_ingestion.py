@@ -6,11 +6,8 @@ Unit tests for the SAP log fetcher.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
-
 import pandas as pd
 import pytest
-
 from src.ingestion.sap_log_fetcher import _fetch_mock_logs, fetch_logs
 
 

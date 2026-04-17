@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-
 # ─── Health / readiness ──────────────────────────────────────────────────
 
 class HealthResponse(BaseModel):
@@ -18,6 +17,9 @@ class HealthResponse(BaseModel):
     mock_api: bool = False
     mock_webhook: bool = False
     mock_hana: bool = False
+    scheduler_running: bool = False
+    pipeline_runs_total: int = 0
+    last_run_at: str | None = None
 
 
 class ReadinessCheck(BaseModel):

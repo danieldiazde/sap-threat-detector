@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-
 from src.ingestion.log_parser import normalize_columns, parse_raw_response, validate_schema
 from src.model.schema import InvalidLogSchemaError
 

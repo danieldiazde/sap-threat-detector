@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-
 from src.alerting.incident_report import build_incident_report, write_report
 
 

@@ -141,11 +141,17 @@ app = FastAPI(
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     """Liveness probe — always returns 200."""
+    snap = metrics.snapshot()
+    task_alive = _pipeline_task is not None and not _pipeline_task.done()
+    pipeline_alive = _pipeline is not None and _pipeline.is_running
     return HealthResponse(
         status="ok",
         mock_api=settings.mock_api,
         mock_webhook=settings.mock_webhook,
         mock_hana=settings.mock_hana,
+        scheduler_running=pipeline_alive and task_alive,
+        pipeline_runs_total=snap["counters"]["pipeline_runs_total"],
+        last_run_at=snap["last_run_at"],
     )
 
 
