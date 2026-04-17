@@ -281,7 +281,7 @@ def _evidence_for_ip(df: pd.DataFrame, source_ip: str) -> pd.DataFrame:
 
 async def _interruptible_sleep(seconds: float, stop: asyncio.Event) -> None:
     """Sleep that wakes early if *stop* is set."""
-    with contextlib.suppress(TimeoutError):
+    with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
         await asyncio.wait_for(stop.wait(), timeout=seconds)
 
 
