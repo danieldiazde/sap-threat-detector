@@ -44,6 +44,7 @@ from src.common.time_utils import utcnow
 from src.ingestion.sap_log_fetcher import close_client as close_fetcher_client
 from src.model.features import extract_features
 from src.model.predict import predict
+from src.model.train import train as train_model
 from src.model.versioning import ModelNotFoundError, registry
 from src.pipeline import Pipeline
 from src.storage.migrations import apply_schema
@@ -56,6 +57,29 @@ logger = get_logger(__name__)
 
 _pipeline: Pipeline | None = None
 _pipeline_task: asyncio.Task[None] | None = None
+
+
+def _bootstrap_model() -> None:
+    """Train an initial model from sample data if no model exists on disk."""
+    from pathlib import Path
+
+    import pandas as pd
+    from src.ingestion.log_parser import normalize_columns
+
+    sample_path = Path("data/samples/sample_logs.csv")
+    if not sample_path.exists():
+        logger.warning("api.bootstrap_model.no_sample_data", extra={"path": str(sample_path)})
+        return
+
+    logger.info("api.bootstrap_model.start", extra={"path": str(sample_path)})
+    df = normalize_columns(pd.read_csv(sample_path))
+    features_df = extract_features(df)
+    if features_df.empty:
+        logger.warning("api.bootstrap_model.no_features")
+        return
+
+    report = train_model(features_df)
+    logger.info("api.bootstrap_model.done", extra={"version": report.get("version_tag")})
 
 
 @asynccontextmanager
@@ -76,6 +100,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await apply_schema()
     except Exception as exc:
         logger.error("api.startup.hana_failed", extra={"error": str(exc)})
+
+    # Bootstrap model if none exists
+    if registry.current_version() is None:
+        await asyncio.to_thread(_bootstrap_model)
 
     # Pipeline
     _pipeline = Pipeline()
