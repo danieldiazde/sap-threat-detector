@@ -23,8 +23,9 @@ from typing import Any
 
 import pandas as pd
 
+from src.alerting.deduplication import deduper
 from src.alerting.incident_report import build_incident_report, write_report
-from src.alerting.sap_webhook import send_alert
+from src.alerting.sap_webhook import build_alert_id, send_alert
 from src.common.config import settings
 from src.common.logging import get_logger
 from src.common.metrics import metrics
@@ -98,6 +99,15 @@ class Pipeline:
         for _, row in anomalies.iterrows():
             anomaly_dict = row.to_dict()
             evidence = _evidence_for_ip(df, str(anomaly_dict.get("source_ip", "")))
+
+            # Stamp alert_id and dedup_key so they persist to the DB
+            anomaly_dict["alert_id"] = build_alert_id(
+                str(anomaly_dict.get("source_ip", "")),
+                str(anomaly_dict.get("threat_level", "")),
+                anomaly_dict.get("detected_at"),
+            )
+            dedup_tuple = deduper.key_for(anomaly_dict)
+            anomaly_dict["dedup_key"] = f"{dedup_tuple[0]}:{dedup_tuple[1]}"
 
             # Generate incident report for high-severity
             report_path: str | None = None

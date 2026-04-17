@@ -106,7 +106,7 @@ def _build_payload(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> di
     detected_at = anomaly_row.get("detected_at") or utcnow()
     source_ip = str(anomaly_row.get("source_ip", "unknown"))
     threat_level = str(anomaly_row.get("threat_level", "high"))
-    alert_id = _alert_id(source_ip, threat_level, detected_at)
+    alert_id = build_alert_id(source_ip, threat_level, detected_at)
 
     return {
         "alert_id": alert_id,
@@ -133,7 +133,7 @@ def _build_payload(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> di
     }
 
 
-def _alert_id(source_ip: str, threat_level: str, detected_at: Any) -> str:
+def build_alert_id(source_ip: str, threat_level: str, detected_at: Any) -> str:
     """
     Deterministic alert ID for idempotency.
 
