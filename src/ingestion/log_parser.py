@@ -22,6 +22,7 @@ from src.model.schema import (
     ALL_LOG_COLUMNS,
     REQUIRED_LOG_COLUMNS,
     InvalidLogSchemaError,
+    validate_schema,
 )
 
 logger = get_logger(__name__)
@@ -135,17 +136,4 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def validate_schema(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Verify that *df* has the required columns.
-
-    Raises :class:`InvalidLogSchemaError` if any required column is missing.
-    Returns the DataFrame unchanged on success (for chainable use).
-    """
-    if df.empty:
-        return df
-
-    missing = [c for c in REQUIRED_LOG_COLUMNS if c not in df.columns]
-    if missing:
-        raise InvalidLogSchemaError(missing=missing, available=list(df.columns))
-    return df
+# validate_schema is imported from src.model.schema (defined there to avoid circular imports)

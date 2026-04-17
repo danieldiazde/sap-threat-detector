@@ -22,8 +22,8 @@ import numpy as np
 import pandas as pd
 
 from src.common.logging import get_logger
-from src.ingestion.log_parser import validate_schema
 from src.model.schema import (
+    validate_schema,
     BRUTE_FORCE_KEYWORDS,
     DENIED_STATUSES,
     FEATURE_COLUMNS,
