@@ -1,0 +1,26 @@
+# Production-only dependencies for SAP BTP Cloud Foundry deployment.
+# Excludes dashboard (streamlit/plotly/pyarrow) and dev tooling (pytest/ruff)
+# to keep the droplet under the 1G disk quota.
+
+# ─── Core data + ML ─────────────────────────────────────────────────────
+numpy>=1.26,<2.3
+pandas>=2.2,<2.4
+scikit-learn>=1.4,<1.7
+joblib>=1.3,<2
+
+# ─── Async HTTP + API ───────────────────────────────────────────────────
+httpx>=0.27,<0.29
+fastapi>=0.111,<0.116
+uvicorn[standard]>=0.30,<0.33
+tenacity>=8.2,<9
+orjson>=3.10,<4
+
+# ─── SAP HANA ────────────────────────────────────────────────────────────
+hdbcli>=2.19,<3
+
+# ─── Observability ───────────────────────────────────────────────────────
+python-json-logger>=2.0,<3
+
+# ─── Config ──────────────────────────────────────────────────────────────
+python-dotenv>=1.0,<2
+tabulate>=0.9.0,<1
