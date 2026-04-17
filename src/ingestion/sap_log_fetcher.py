@@ -45,6 +45,7 @@ RETRY_MAX_DELAY: float = 5.0
 # request. We close it explicitly via ``close_client()`` from the API
 # lifespan context.
 _client: httpx.AsyncClient | None = None
+_last_window_start: str | None = None  # tracks the last fetched window
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -84,16 +85,29 @@ async def fetch_logs(page: int = 1) -> pd.DataFrame:
 
 async def fetch_all_logs() -> pd.DataFrame:
     """
-    Fetch every page of logs by following the ``next_page`` envelope field.
+    Fetch every page of logs for the current 30-minute window.
 
-    Falls back to "stop when page is empty" if the API doesn't expose
-    next-page metadata. This preserves ``ingested_at`` — the timestamp is
-    captured once at the start of the pagination loop so every row in the
-    final concatenated batch shares the same ``ingested_at`` (the moment
-    the pipeline started reading).
+    Calls /info first to check the window_start. If the window hasn't
+    changed since the last fetch, returns an empty DataFrame immediately
+    (saving 12 API calls and ~5,753 duplicate HANA inserts per skipped cycle).
     """
+    global _last_window_start
+
     if settings.mock_api:
         return _fetch_mock_logs()
+
+    # Check if the window has rolled over since our last fetch.
+    headers = {"Authorization": f"Bearer {settings.sap_api_key}"}
+    info = await _get_with_retry(
+        url=f"{settings.sap_api_url}/info",
+        headers=headers,
+        params={},
+    )
+    window_start = info.get("window_start") if isinstance(info, dict) else None
+    if window_start is not None and window_start == _last_window_start:
+        logger.debug("fetcher.skip_duplicate_window", extra={"window_start": window_start})
+        return pd.DataFrame()
+    _last_window_start = window_start
 
     ingested_at = utcnow()
     collected: list[pd.DataFrame] = []
@@ -101,7 +115,7 @@ async def fetch_all_logs() -> pd.DataFrame:
     while True:
         raw = await _get_with_retry(
             url=f"{settings.sap_api_url}/logs/current",
-            headers={"Authorization": f"Bearer {settings.sap_api_key}"},
+            headers=headers,
             params={"page": page, "page_size": settings.sap_api_page_size},
         )
         df = parse_raw_response(raw)
@@ -114,6 +128,10 @@ async def fetch_all_logs() -> pd.DataFrame:
             break
         page += 1
 
+    logger.info(
+        "fetcher.window_fetched",
+        extra={"window_start": window_start, "pages": page, "rows": sum(len(d) for d in collected)},
+    )
     if not collected:
         return pd.DataFrame()
     return pd.concat(collected, ignore_index=True)
