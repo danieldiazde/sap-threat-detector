@@ -26,7 +26,7 @@ jobs:
             -s ${{ secrets.CF_SPACE }}
 
       - name: Push code (no start)
-        run: cf push -f infra/manifest.yml --no-start --no-cache
+        run: cf push -f infra/manifest.yml --no-start
 
       - name: Set environment variables on CF
         run: |
