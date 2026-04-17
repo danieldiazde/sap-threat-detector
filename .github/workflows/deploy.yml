@@ -25,6 +25,9 @@ jobs:
             -o ${{ secrets.CF_ORG }} \
             -s ${{ secrets.CF_SPACE }}
 
+      - name: Push code (no start)
+        run: cf push -f infra/manifest.yml --no-start
+
       - name: Set environment variables on CF
         run: |
           cf set-env sap-threat-detector SAP_API_URL "${{ secrets.SAP_API_URL }}"
@@ -36,5 +39,9 @@ jobs:
           cf set-env sap-threat-detector HANA_USER "${{ secrets.HANA_USER }}"
           cf set-env sap-threat-detector HANA_PASSWORD "${{ secrets.HANA_PASSWORD }}"
 
-      - name: Deploy application
-        run: cf push -f infra/manifest.yml
+      - name: Start application
+        run: cf start sap-threat-detector
+
+      - name: Show app logs on failure
+        if: failure()
+        run: cf logs sap-threat-detector --recent
