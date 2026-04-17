@@ -74,7 +74,7 @@ async def fetch_logs(page: int = 1) -> pd.DataFrame:
         return _fetch_mock_logs()
 
     raw = await _get_with_retry(
-        url=settings.sap_api_url,
+        url=f"{settings.sap_api_url}/logs/current",
         headers={"Authorization": f"Bearer {settings.sap_api_key}"},
         params={"page": page, "page_size": settings.sap_api_page_size},
     )
@@ -100,7 +100,7 @@ async def fetch_all_logs() -> pd.DataFrame:
     page = 1
     while True:
         raw = await _get_with_retry(
-            url=settings.sap_api_url,
+            url=f"{settings.sap_api_url}/logs/current",
             headers={"Authorization": f"Bearer {settings.sap_api_key}"},
             params={"page": page, "page_size": settings.sap_api_page_size},
         )
