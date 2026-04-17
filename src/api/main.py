@@ -26,6 +26,8 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException, status
 
 from src.api.schemas import (
+    AnomaliesResponse,
+    AnomalyRecord,
     AnomalyResult,
     HealthResponse,
     MetricsResponse,
@@ -45,6 +47,7 @@ from src.model.versioning import ModelNotFoundError, registry
 from src.pipeline import Pipeline
 from src.storage.migrations import apply_schema
 from src.storage.pool import pool
+from src.storage.repositories import anomaly_repository
 
 logger = get_logger(__name__)
 
@@ -208,3 +211,26 @@ async def predict_endpoint(request: PredictRequest) -> PredictResponse:
 async def metrics_endpoint() -> dict[str, Any]:
     """Return the current metrics snapshot as JSON."""
     return metrics.snapshot()
+
+
+@app.get("/anomalies", response_model=AnomaliesResponse)
+async def anomalies_endpoint(limit: int = 50) -> AnomaliesResponse:
+    """Return the most recent detected anomalies, newest first."""
+    limit = min(limit, 200)
+    rows = await anomaly_repository.recent_anomalies(limit=limit)
+    records = [
+        AnomalyRecord(
+            detected_at=str(r.get("detected_at") or ""),
+            source_ip=str(r.get("source_ip") or ""),
+            threat_level=str(r.get("threat_level") or ""),
+            anomaly_score=float(r.get("anomaly_score") or 0.0),
+            total_requests=int(r.get("total_requests") or 0),
+            error_rate=float(r.get("error_rate") or 0.0),
+            pipeline_mttd_ms=int(r["pipeline_mttd_ms"]) if r.get("pipeline_mttd_ms") is not None else None,
+            e2e_mttd_ms=int(r["e2e_mttd_ms"]) if r.get("e2e_mttd_ms") is not None else None,
+            webhook_sent=bool(r.get("webhook_sent", False)),
+            incident_report_path=r.get("incident_report_path"),
+        )
+        for r in rows
+    ]
+    return AnomaliesResponse(anomalies=records, total=len(records))

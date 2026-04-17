@@ -63,6 +63,26 @@ class PredictResponse(BaseModel):
     pipeline_mttd_ms: int
 
 
+# ─── /anomalies ──────────────────────────────────────────────────────────
+
+class AnomalyRecord(BaseModel):
+    detected_at: str | None = None
+    source_ip: str = ""
+    threat_level: str = ""
+    anomaly_score: float = 0.0
+    total_requests: int = 0
+    error_rate: float = 0.0
+    pipeline_mttd_ms: int | None = None
+    e2e_mttd_ms: int | None = None
+    webhook_sent: bool = False
+    incident_report_path: str | None = None
+
+
+class AnomaliesResponse(BaseModel):
+    anomalies: list[AnomalyRecord]
+    total: int
+
+
 # ─── /metrics ────────────────────────────────────────────────────────────
 
 class MetricsResponse(BaseModel):
