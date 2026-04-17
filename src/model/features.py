@@ -20,16 +20,15 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-
 from src.common.logging import get_logger
 from src.model.schema import (
-    validate_schema,
     BRUTE_FORCE_KEYWORDS,
     DENIED_STATUSES,
     FEATURE_COLUMNS,
     SQL_INJECTION_KEYWORDS,
     SUSPICIOUS_PATH_FRAGMENTS,
     TEXT_STATUS_TO_CODE,
+    validate_schema,
 )
 
 logger = get_logger(__name__)
@@ -39,6 +38,10 @@ logger = get_logger(__name__)
 STATUS_4XX_LOWER: int = 400
 STATUS_4XX_UPPER: int = 499
 STATUS_5XX_LOWER: int = 500
+
+# LLM log types carry no SOURCE_IP/STATUS/PORT_SERVICE fields — they need a
+# separate feature pipeline (see feat/llm-anomaly-detector).
+LLM_LOG_TYPES: frozenset[str] = frozenset({"LLM_REQUEST", "LLM_ERROR", "LLM_TIMEOUT"})
 
 
 def extract_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -57,6 +60,18 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
         return _empty_feature_frame()
 
     df = validate_schema(df)
+
+    # Drop LLM log types — no IP/status/port fields; handled by feat/llm-anomaly-detector.
+    if "log_type" in df.columns:
+        before = len(df)
+        df = df[~df["log_type"].str.upper().isin(LLM_LOG_TYPES)].copy()
+        dropped = before - len(df)
+        if dropped:
+            logger.debug("features.llm_logs_filtered", extra={"dropped": dropped})
+
+    if df.empty:
+        return _empty_feature_frame()
+
     df = _enrich_raw(df)
 
     grouped = df.groupby("source_ip", sort=False)
