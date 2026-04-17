@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import argparse
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -80,7 +80,7 @@ def generate(
 ) -> pd.DataFrame:
     """Return a DataFrame of synthetic security logs."""
     rng = random.Random(seed)
-    base_time = datetime(2026, 4, 4, 14, 0, 0, tzinfo=UTC)
+    base_time = datetime(2026, 4, 4, 14, 0, 0, tzinfo=timezone.utc)
 
     normal_ips = [f"10.10.1.{i}" for i in range(1, NORMAL_IPS_POOL_SIZE + 1)]
     attacker_ips = [f"203.0.113.{i}" for i in range(1, ATTACKER_IPS_POOL_SIZE + 1)]

@@ -7,7 +7,6 @@ import json
 import pytest
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
-
 from src.model.versioning import ModelNotFoundError, ModelRegistry
 
 

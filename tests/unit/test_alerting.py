@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pandas as pd
-
 from src.alerting.sap_webhook import _alert_id, _build_payload
 
 

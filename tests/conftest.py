@@ -13,21 +13,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
 import pytest
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
-
 from src.common.config import Settings
 from src.common.metrics import MetricsRegistry
 from src.model.dbscan_detector import DBSCANDetector
 from src.model.features import extract_features, feature_matrix
-from src.model.schema import FEATURE_COLUMNS
 from src.model.versioning import ModelRegistry
-
 
 # ─── Log DataFrames ──────────────────────────────────────────────────────
 
@@ -162,5 +158,5 @@ def in_memory_metrics() -> MetricsRegistry:
 
 
 def make_utc(year: int = 2026, month: int = 4, day: int = 4, hour: int = 14) -> datetime:
-    """Convenience for creating a tz-aware UTC datetime."""
+    """Convenience for creating a tz-aware timezone.utc datetime."""
     return datetime(year, month, day, hour, tzinfo=timezone.utc)

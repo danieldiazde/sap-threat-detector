@@ -27,7 +27,6 @@ from typing import Any
 
 import httpx
 import pandas as pd
-
 from src.alerting.deduplication import deduper
 from src.common.config import settings
 from src.common.logging import get_logger

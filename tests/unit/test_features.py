@@ -7,8 +7,6 @@ Unit tests for feature engineering — parametrized across edge cases.
 from __future__ import annotations
 
 import pandas as pd
-import pytest
-
 from src.model.features import extract_features
 from src.model.schema import FEATURE_COLUMNS
 
