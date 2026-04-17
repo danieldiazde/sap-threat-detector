@@ -33,7 +33,7 @@ from src.common.time_utils import utcnow
 from src.ingestion.sap_log_fetcher import fetch_all_logs
 from src.model.features import extract_features
 from src.model.predict import anomalies_only, predict, reset_active_model
-from src.storage.repositories import anomaly_repository, log_repository
+from src.storage.repositories import anomaly_repository, log_repository, model_version_repository
 
 logger = get_logger(__name__)
 
@@ -186,6 +186,9 @@ class Pipeline:
             # Hot-swap: clear the in-process model cache so next predict()
             # loads the freshly saved model automatically
             reset_active_model()
+
+            # Persist model metadata to HANA MODEL_VERSIONS table
+            await model_version_repository.register(report)
 
             logger.info(
                 "pipeline.retrain.done",

@@ -100,7 +100,10 @@ def train(features_df: pd.DataFrame, *, model_type: str | None = None) -> dict[s
         "version_tag": version_tag,
         "model_type": model_type,
         "training_samples": int(len(X)),
+        "feature_columns": list(FEATURE_COLUMNS),
         "hyperparams": hyperparams,
+        "contamination": hyperparams.get("contamination", settings.model_contamination),
+        "cv_scores": metrics.get("cv_anomaly_rate_stability", {}),
         "metrics": metrics,
         "elapsed_seconds": round(elapsed, 3),
     }
