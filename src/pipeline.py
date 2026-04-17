@@ -31,7 +31,7 @@ from src.common.metrics import metrics
 from src.common.time_utils import utcnow
 from src.ingestion.sap_log_fetcher import fetch_all_logs
 from src.model.features import extract_features
-from src.model.predict import anomalies_only, predict
+from src.model.predict import anomalies_only, predict, reset_active_model
 from src.storage.repositories import anomaly_repository, log_repository
 
 logger = get_logger(__name__)
@@ -43,12 +43,19 @@ BACKOFF_MAX: float = 60.0
 BACKOFF_RESET_AFTER_SUCCESS: bool = True
 
 
+RETRAIN_DATA_PATH = "data/samples/sample_logs.csv"
+RETRAIN_LOG_BUFFER_MAX_ROWS: int = 50_000  # cap memory usage
+
+
 class Pipeline:
     """End-to-end detection pipeline with graceful shutdown."""
 
     def __init__(self, *, stop_event: asyncio.Event | None = None) -> None:
         self._stop = stop_event or asyncio.Event()
         self._consecutive_errors: int = 0
+        self._cycle_count: int = 0
+        self._log_buffer: list[pd.DataFrame] = []  # accumulates logs for retraining
+        self._retraining: bool = False  # True while a retrain is in progress
 
     # ── Single pass ──────────────────────────────────────────────────
 
@@ -109,6 +116,21 @@ class Pipeline:
             await anomaly_repository.insert_anomaly(anomaly_dict)
 
         metrics.incr_pipeline_runs()
+        self._cycle_count += 1
+
+        # Accumulate logs for periodic retraining
+        self._log_buffer.append(df)
+
+        # Trim buffer so it never exceeds RETRAIN_LOG_BUFFER_MAX_ROWS
+        total_buffered = sum(len(d) for d in self._log_buffer)
+        while total_buffered > RETRAIN_LOG_BUFFER_MAX_ROWS and len(self._log_buffer) > 1:
+            removed = self._log_buffer.pop(0)
+            total_buffered -= len(removed)
+
+        # Trigger background retrain every N cycles
+        retrain_every = settings.retrain_every_n_cycles
+        if self._cycle_count % retrain_every == 0 and not self._retraining:
+            asyncio.create_task(self._retrain())
 
         summary = {
             "status": "ok",
@@ -120,6 +142,53 @@ class Pipeline:
         }
         logger.info("pipeline.run_once.done", extra=summary)
         return summary
+
+    async def _retrain(self) -> None:
+        """
+        Retrain the model in a background thread using accumulated logs.
+
+        Runs via asyncio.to_thread so the detection loop is never paused.
+        After training, invalidates the model cache so the next predict()
+        call automatically picks up the new model.
+        """
+        self._retraining = True
+        logger.info(
+            "pipeline.retrain.start",
+            extra={"cycle": self._cycle_count, "buffered_rows": sum(len(d) for d in self._log_buffer)},
+        )
+        try:
+            # Snapshot the buffer (don't hold a reference during the slow train)
+            combined = pd.concat(self._log_buffer, ignore_index=True)
+
+            def _do_train() -> dict:
+                import os
+                from pathlib import Path
+                from src.model.train import train
+
+                # Save combined logs so train() can read them
+                Path(RETRAIN_DATA_PATH).parent.mkdir(parents=True, exist_ok=True)
+                combined.to_csv(RETRAIN_DATA_PATH, index=False)
+
+                return train(combined)
+
+            report = await asyncio.to_thread(_do_train)
+
+            # Hot-swap: clear the in-process model cache so next predict()
+            # loads the freshly saved model automatically
+            reset_active_model()
+
+            logger.info(
+                "pipeline.retrain.done",
+                extra={
+                    "version": report.get("version_tag"),
+                    "samples": report.get("training_samples"),
+                    "anomaly_rate": report.get("anomaly_rate"),
+                },
+            )
+        except Exception as exc:
+            logger.error("pipeline.retrain.error", extra={"error": str(exc)})
+        finally:
+            self._retraining = False
 
     # ── Continuous loop ──────────────────────────────────────────────
 
