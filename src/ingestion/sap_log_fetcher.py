@@ -203,16 +203,26 @@ def _log_retry(attempt: int, exc: Exception) -> None:
 
 
 def _has_next_page(raw: object, current_page: int) -> bool:
-    """Best-effort detection of pagination continuation."""
+    """Detect pagination continuation from the SAP API response envelope.
+
+    The API returns top-level fields: current_page, total_pages, records_in_page,
+    batch_size. Falls back to nested pagination dict for other API shapes.
+    """
     if not isinstance(raw, dict):
         return False
+    # SAP API: top-level total_pages
+    total_pages = raw.get("total_pages")
+    if total_pages is not None:
+        return current_page < int(total_pages)
+    # Fallback: next_page pointer
     if raw.get("next_page") is not None:
         return True
+    # Fallback: nested pagination object
     pagination = raw.get("pagination") or {}
     if isinstance(pagination, dict):
-        total_pages = pagination.get("total_pages")
-        if total_pages is not None:
-            return current_page < int(total_pages)
+        nested_total = pagination.get("total_pages")
+        if nested_total is not None:
+            return current_page < int(nested_total)
         if pagination.get("has_more") is True:
             return True
     return False
