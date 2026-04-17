@@ -59,6 +59,22 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     missing = [c for c in REQUIRED_LOG_COLUMNS if c not in df.columns]
     if missing:
         raise InvalidLogSchemaError(missing=missing, available=list(df.columns))
+
+    # Drop rows with missing source_ip — LLM-only log lines (LLM_REQUEST,
+    # LLM_ERROR, LLM_TIMEOUT) have no network source and would all collapse
+    # into a single phantom IP during groupby, skewing the model.
+    before = len(df)
+    df = df[df["source_ip"].astype(str).str.strip().ne("")]
+    df = df.dropna(subset=["source_ip"])
+    dropped = before - len(df)
+    if dropped:
+        logger.info(
+            "features.extract: dropped rows with missing source_ip",
+            extra={"dropped": dropped, "remaining": len(df)},
+        )
+    if df.empty:
+        return _empty_feature_frame()
+
     df = _enrich_raw(df)
 
     grouped = df.groupby("source_ip", sort=False)
