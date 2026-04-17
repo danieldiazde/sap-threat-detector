@@ -22,7 +22,7 @@ Owner: Security Analyst & Visualization Lead
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import os
 from typing import Any
 
 import pandas as pd
@@ -37,10 +37,6 @@ st.set_page_config(page_title="SAP AI Security SOC", page_icon="\U0001f6e1\ufe0f
 
 
 def _get_refresh_interval() -> int:
-    """Read DASHBOARD_REFRESH_SECONDS from env (not importing settings to
-    avoid importing heavy ML libs in the Streamlit process)."""
-    import os
-
     try:
         return int(os.getenv("DASHBOARD_REFRESH_SECONDS", "5")) * 1000
     except ValueError:
@@ -58,7 +54,6 @@ except ImportError:
 
 # ─── Data loading helpers ────────────────────────────────────────────────
 
-import os
 API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 

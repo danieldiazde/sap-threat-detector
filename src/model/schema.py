@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Final
 
+import pandas as pd
+
 # ─── Raw log columns expected from the SAP API / mock CSV ──────────────────
 #
 # If the SAP API response uses different names, adapt them inside
@@ -126,14 +128,13 @@ class InvalidLogSchemaError(ValueError):
         )
 
 
-def validate_schema(df: "pd.DataFrame") -> "pd.DataFrame":
+def validate_schema(df: pd.DataFrame) -> pd.DataFrame:
     """
     Verify that *df* has the required columns.
 
     Raises :class:`InvalidLogSchemaError` if any required column is missing.
     Returns the DataFrame unchanged on success (for chainable use).
     """
-    import pandas as pd  # local import to keep schema.py free of heavy deps at import time
 
     if df.empty:
         return df

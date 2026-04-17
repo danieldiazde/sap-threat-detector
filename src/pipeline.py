@@ -17,12 +17,12 @@ Owner: Cloud Integration Engineer
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
-
 from src.alerting.deduplication import deduper
 from src.alerting.incident_report import build_incident_report, write_report
 from src.alerting.sap_webhook import build_alert_id, send_alert
@@ -55,8 +55,9 @@ class Pipeline:
         self._stop = stop_event or asyncio.Event()
         self._consecutive_errors: int = 0
         self._cycle_count: int = 0
-        self._log_buffer: list[pd.DataFrame] = []  # accumulates logs for retraining
-        self._retraining: bool = False  # True while a retrain is in progress
+        self._log_buffer: list[pd.DataFrame] = []
+        self._retraining: bool = False
+        self._retrain_task: asyncio.Task | None = None
 
     # ── Single pass ──────────────────────────────────────────────────
 
@@ -140,7 +141,7 @@ class Pipeline:
         # Trigger background retrain every N cycles
         retrain_every = settings.retrain_every_n_cycles
         if self._cycle_count % retrain_every == 0 and not self._retraining:
-            asyncio.create_task(self._retrain())
+            self._retrain_task = asyncio.create_task(self._retrain())
 
         summary = {
             "status": "ok",
@@ -171,8 +172,8 @@ class Pipeline:
             combined = pd.concat(self._log_buffer, ignore_index=True)
 
             def _do_train() -> dict:
-                import os
                 from pathlib import Path
+
                 from src.model.train import train
 
                 # Save combined logs so train() can read them
@@ -275,18 +276,13 @@ def _evidence_for_ip(df: pd.DataFrame, source_ip: str) -> pd.DataFrame:
 
 async def _interruptible_sleep(seconds: float, stop: asyncio.Event) -> None:
     """Sleep that wakes early if *stop* is set."""
-    try:
+    with contextlib.suppress(TimeoutError):
         await asyncio.wait_for(stop.wait(), timeout=seconds)
-    except asyncio.TimeoutError:
-        pass
 
 
 def _install_signal_handlers(stop: asyncio.Event) -> None:
     """Register SIGTERM / SIGINT handlers to set the stop event."""
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop.set)
-        except NotImplementedError:
-            # Windows doesn't support add_signal_handler
-            pass

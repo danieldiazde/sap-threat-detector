@@ -7,8 +7,8 @@ Core responsibilities:
 - Load the active model via :class:`ModelRegistry` (cached).
 - Score features with the fitted scaler + decision_function.
 - Assign threat levels with explicit, settings-driven thresholds.
-- **Stamp MTTD**: compute ``pipeline_mttd_ms`` (detected_at − ingested_at)
-  and ``e2e_mttd_ms`` (detected_at − min log datetime in the batch) on
+- **Stamp MTTD**: compute ``pipeline_mttd_ms`` (detected_at - ingested_at)
+  and ``e2e_mttd_ms`` (detected_at - min log datetime in the batch) on
   every row, and publish the samples to :class:`MetricsRegistry`.
 - Maintain a **sliding context window** of recent batches per IP so we
   can detect "multi-bucket" anomalies — IPs that stay elevated across
@@ -21,11 +21,9 @@ from __future__ import annotations
 
 from collections import deque
 from datetime import datetime
-from typing import Any
 
 import numpy as np
 import pandas as pd
-
 from src.common.config import settings
 from src.common.logging import get_logger
 from src.common.metrics import metrics
@@ -193,7 +191,9 @@ def reset_active_model() -> None:
 
 
 def _empty_output() -> pd.DataFrame:
-    columns = ["source_ip", *FEATURE_COLUMNS] + [
+    columns = [
+        "source_ip",
+        *FEATURE_COLUMNS,
         "anomaly_score",
         "is_anomaly",
         "threat_level",

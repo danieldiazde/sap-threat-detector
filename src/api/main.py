@@ -19,12 +19,13 @@ Owner: Cloud Integration Engineer
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, status
-
 from src.api.schemas import (
     AnomaliesResponse,
     AnomalyRecord,
@@ -90,10 +91,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _pipeline.request_stop()
     if _pipeline_task is not None:
         _pipeline_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await _pipeline_task
-        except asyncio.CancelledError:
-            pass
     await close_fetcher_client()
     await pool.close()
 

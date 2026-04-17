@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
 import httpx
 import pandas as pd
-
 from src.common.config import settings
 from src.common.logging import get_logger
 from src.common.time_utils import utcnow
@@ -40,8 +40,8 @@ RETRY_MAX_DELAY: float = 5.0
 
 # ─── Shared HTTP client ────────────────────────────────────────────────────
 #
-# httpx.AsyncClient opens a connection pool on first use — sharing one
-# across the process is 10-100× faster than constructing a new client per
+# httpx.AsyncClient opens a connection pool on first use -- sharing one
+# across the process is 10-100x faster than constructing a new client per
 # request. We close it explicitly via ``close_client()`` from the API
 # lifespan context.
 _client: httpx.AsyncClient | None = None
@@ -120,7 +120,7 @@ async def fetch_all_logs() -> pd.DataFrame:
 
 
 async def poll_logs(
-    on_batch_received: "_BatchCallback",
+    on_batch_received: _BatchCallback,
     *,
     stop_event: asyncio.Event | None = None,
 ) -> None:
@@ -147,7 +147,7 @@ async def poll_logs(
                     await asyncio.sleep(interval)
                 else:
                     await asyncio.wait_for(stop_event.wait(), timeout=interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
     finally:
         await close_client()
@@ -155,9 +155,6 @@ async def poll_logs(
 
 
 # ─── Internal helpers ──────────────────────────────────────────────────────
-
-# Callback signature: ``async def handler(df: pd.DataFrame) -> None``
-from typing import Awaitable, Callable
 
 _BatchCallback = Callable[[pd.DataFrame], Awaitable[None]]
 
@@ -194,7 +191,7 @@ async def _get_with_retry(
             delay *= 0.5 + random.random()  # jitter, 0.5x..1.5x
             await asyncio.sleep(delay)
 
-    assert last_exc is not None  # noqa: S101 — for the type checker
+    assert last_exc is not None
     raise last_exc
 
 

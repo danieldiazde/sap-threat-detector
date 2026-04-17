@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-
 from src.common.config import settings
 from src.common.logging import get_logger
 from src.ingestion.log_parser import normalize_columns
@@ -58,10 +57,7 @@ def main() -> None:
         sys.exit(1)
 
     # Load
-    if data_path.suffix == ".parquet":
-        df = pd.read_parquet(data_path)
-    else:
-        df = pd.read_csv(data_path)
+    df = pd.read_parquet(data_path) if data_path.suffix == ".parquet" else pd.read_csv(data_path)
     df = normalize_columns(df)
     print(f"Loaded {len(df)} log rows from {data_path}")
 
@@ -79,7 +75,7 @@ def main() -> None:
     report = train(features_df, model_type=model_type)
 
     # Report
-    print(f"\nTraining complete:")
+    print("\nTraining complete:")
     print(f"  Version tag:      {report['version_tag']}")
     print(f"  Model type:       {report['model_type']}")
     print(f"  Training samples: {report['training_samples']}")

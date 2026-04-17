@@ -10,17 +10,16 @@ training a model first so predict has something to load.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-
 from src.common.metrics import MetricsRegistry
-import importlib
-train_module = importlib.import_module("src.model.train")
 from src.model.versioning import ModelRegistry
 from src.pipeline import Pipeline
 from src.storage.repositories import AnomalyRepository, LogRepository
+
+train_module = importlib.import_module("src.model.train")
 
 
 @pytest.mark.integration
