@@ -163,10 +163,15 @@ class Pipeline:
         call automatically picks up the new model.
         """
         self._retraining = True
+        buffered_rows = sum(len(d) for d in self._log_buffer)
         logger.info(
             "pipeline.retrain.start",
-            extra={"cycle": self._cycle_count, "buffered_rows": sum(len(d) for d in self._log_buffer)},
+            extra={"cycle": self._cycle_count, "buffered_rows": buffered_rows},
         )
+        if not self._log_buffer:
+            logger.warning("pipeline.retrain.skip_empty_buffer")
+            self._retraining = False
+            return
         try:
             # Snapshot the buffer (don't hold a reference during the slow train)
             combined = pd.concat(self._log_buffer, ignore_index=True)
