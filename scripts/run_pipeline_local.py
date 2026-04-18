@@ -50,10 +50,9 @@ async def _main() -> None:
 
 
 def main() -> None:
-    try:
+    import contextlib
+    with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_main())
-    except KeyboardInterrupt:
-        pass
 
 
 if __name__ == "__main__":

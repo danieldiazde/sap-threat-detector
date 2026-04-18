@@ -17,14 +17,15 @@ Owner: Cloud Integration Engineer
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal
 from datetime import datetime
 from typing import Any
 
 import pandas as pd
-
+from src.alerting.deduplication import deduper
 from src.alerting.incident_report import build_incident_report, write_report
-from src.alerting.sap_webhook import send_alert
+from src.alerting.sap_webhook import build_alert_id, send_alert
 from src.common.config import settings
 from src.common.logging import get_logger
 from src.common.metrics import metrics
@@ -32,7 +33,7 @@ from src.common.time_utils import utcnow
 from src.ingestion.sap_log_fetcher import fetch_all_logs
 from src.model.features import extract_features
 from src.model.predict import anomalies_only, predict, reset_active_model
-from src.storage.repositories import anomaly_repository, log_repository
+from src.storage.repositories import anomaly_repository, log_repository, model_version_repository
 
 logger = get_logger(__name__)
 
@@ -54,8 +55,9 @@ class Pipeline:
         self._stop = stop_event or asyncio.Event()
         self._consecutive_errors: int = 0
         self._cycle_count: int = 0
-        self._log_buffer: list[pd.DataFrame] = []  # accumulates logs for retraining
-        self._retraining: bool = False  # True while a retrain is in progress
+        self._log_buffer: list[pd.DataFrame] = []
+        self._retraining: bool = False
+        self._retrain_task: asyncio.Task | None = None
 
     # ── Single pass ──────────────────────────────────────────────────
 
@@ -99,6 +101,15 @@ class Pipeline:
             anomaly_dict = row.to_dict()
             evidence = _evidence_for_ip(df, str(anomaly_dict.get("source_ip", "")))
 
+            # Stamp alert_id and dedup_key so they persist to the DB
+            anomaly_dict["alert_id"] = build_alert_id(
+                str(anomaly_dict.get("source_ip", "")),
+                str(anomaly_dict.get("threat_level", "")),
+                anomaly_dict.get("detected_at"),
+            )
+            dedup_tuple = deduper.key_for(anomaly_dict)
+            anomaly_dict["dedup_key"] = f"{dedup_tuple[0]}:{dedup_tuple[1]}"
+
             # Generate incident report for high-severity
             report_path: str | None = None
             if str(anomaly_dict.get("threat_level", "")).lower() == "high":
@@ -130,7 +141,7 @@ class Pipeline:
         # Trigger background retrain every N cycles
         retrain_every = settings.retrain_every_n_cycles
         if self._cycle_count % retrain_every == 0 and not self._retraining:
-            asyncio.create_task(self._retrain())
+            self._retrain_task = asyncio.create_task(self._retrain())
 
         summary = {
             "status": "ok",
@@ -152,17 +163,22 @@ class Pipeline:
         call automatically picks up the new model.
         """
         self._retraining = True
+        buffered_rows = sum(len(d) for d in self._log_buffer)
         logger.info(
             "pipeline.retrain.start",
-            extra={"cycle": self._cycle_count, "buffered_rows": sum(len(d) for d in self._log_buffer)},
+            extra={"cycle": self._cycle_count, "buffered_rows": buffered_rows},
         )
+        if not self._log_buffer:
+            logger.warning("pipeline.retrain.skip_empty_buffer")
+            self._retraining = False
+            return
         try:
             # Snapshot the buffer (don't hold a reference during the slow train)
             combined = pd.concat(self._log_buffer, ignore_index=True)
 
             def _do_train() -> dict:
-                import os
                 from pathlib import Path
+
                 from src.model.train import train
 
                 # Save combined logs so train() can read them
@@ -176,6 +192,9 @@ class Pipeline:
             # Hot-swap: clear the in-process model cache so next predict()
             # loads the freshly saved model automatically
             reset_active_model()
+
+            # Persist model metadata to HANA MODEL_VERSIONS table
+            await model_version_repository.register(report)
 
             logger.info(
                 "pipeline.retrain.done",
@@ -262,18 +281,13 @@ def _evidence_for_ip(df: pd.DataFrame, source_ip: str) -> pd.DataFrame:
 
 async def _interruptible_sleep(seconds: float, stop: asyncio.Event) -> None:
     """Sleep that wakes early if *stop* is set."""
-    try:
+    with contextlib.suppress(asyncio.TimeoutError, TimeoutError):
         await asyncio.wait_for(stop.wait(), timeout=seconds)
-    except asyncio.TimeoutError:
-        pass
 
 
 def _install_signal_handlers(stop: asyncio.Event) -> None:
     """Register SIGTERM / SIGINT handlers to set the stop event."""
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop.set)
-        except NotImplementedError:
-            # Windows doesn't support add_signal_handler
-            pass

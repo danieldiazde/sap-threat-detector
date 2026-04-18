@@ -5,27 +5,26 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pandas as pd
-
-from src.alerting.sap_webhook import _alert_id, _build_payload
+from src.alerting.sap_webhook import build_alert_id, _build_payload
 
 
 class TestAlertId:
     def test_deterministic(self):
         dt = datetime(2026, 4, 4, 14, 45, 0, tzinfo=timezone.utc)
-        a = _alert_id("10.0.0.1", "high", dt)
-        b = _alert_id("10.0.0.1", "high", dt)
+        a = build_alert_id("10.0.0.1", "high", dt)
+        b = build_alert_id("10.0.0.1", "high", dt)
         assert a == b
 
     def test_different_ips_differ(self):
         dt = datetime(2026, 4, 4, 14, 45, 0, tzinfo=timezone.utc)
-        a = _alert_id("10.0.0.1", "high", dt)
-        b = _alert_id("10.0.0.2", "high", dt)
+        a = build_alert_id("10.0.0.1", "high", dt)
+        b = build_alert_id("10.0.0.2", "high", dt)
         assert a != b
 
     def test_same_minute_same_id(self):
         dt1 = datetime(2026, 4, 4, 14, 45, 0, tzinfo=timezone.utc)
         dt2 = datetime(2026, 4, 4, 14, 45, 59, tzinfo=timezone.utc)
-        assert _alert_id("10.0.0.1", "high", dt1) == _alert_id("10.0.0.1", "high", dt2)
+        assert build_alert_id("10.0.0.1", "high", dt1) == build_alert_id("10.0.0.1", "high", dt2)
 
 
 class TestBuildPayload:

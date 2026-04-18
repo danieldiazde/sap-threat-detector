@@ -54,6 +54,5 @@ class TestSettings:
 
     def test_invalid_int_raises(self):
         import pytest
-        with patch.dict(os.environ, {"HANA_PORT": "abc"}, clear=True):
-            with pytest.raises(ValueError, match="not a valid int"):
-                Settings.from_env()
+        with patch.dict(os.environ, {"HANA_PORT": "abc"}, clear=True), pytest.raises(ValueError, match="not a valid int"):
+            Settings.from_env()

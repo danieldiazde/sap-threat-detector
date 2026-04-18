@@ -3,7 +3,7 @@
 ## Build & Run
 
 ```bash
-make install          # pip install -r requirements.txt
+make install          # pip install -r requirements-dev.txt (local dev; CF uses requirements.txt)
 make api              # uvicorn src.api.main:app --reload
 make dashboard        # streamlit run src/dashboard/app.py
 make mock             # generate 5000 mock SAP logs

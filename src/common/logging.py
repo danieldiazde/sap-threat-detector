@@ -46,7 +46,7 @@ class _JsonFormatter(logging.Formatter):
         }
     )
 
-    def format(self, record: logging.LogRecord) -> str:  # noqa: D401
+    def format(self, record: logging.LogRecord) -> str:
         import json
 
         payload: dict[str, Any] = {

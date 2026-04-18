@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import random
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
 import httpx
 import pandas as pd
-
 from src.common.config import settings
 from src.common.logging import get_logger
 from src.common.time_utils import utcnow
@@ -40,11 +40,12 @@ RETRY_MAX_DELAY: float = 5.0
 
 # ─── Shared HTTP client ────────────────────────────────────────────────────
 #
-# httpx.AsyncClient opens a connection pool on first use — sharing one
-# across the process is 10-100× faster than constructing a new client per
+# httpx.AsyncClient opens a connection pool on first use -- sharing one
+# across the process is 10-100x faster than constructing a new client per
 # request. We close it explicitly via ``close_client()`` from the API
 # lifespan context.
 _client: httpx.AsyncClient | None = None
+_last_window_start: str | None = None  # tracks the last fetched window
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -74,7 +75,7 @@ async def fetch_logs(page: int = 1) -> pd.DataFrame:
         return _fetch_mock_logs()
 
     raw = await _get_with_retry(
-        url=settings.sap_api_url,
+        url=f"{settings.sap_api_url}/logs/current",
         headers={"Authorization": f"Bearer {settings.sap_api_key}"},
         params={"page": page, "page_size": settings.sap_api_page_size},
     )
@@ -84,24 +85,37 @@ async def fetch_logs(page: int = 1) -> pd.DataFrame:
 
 async def fetch_all_logs() -> pd.DataFrame:
     """
-    Fetch every page of logs by following the ``next_page`` envelope field.
+    Fetch every page of logs for the current 30-minute window.
 
-    Falls back to "stop when page is empty" if the API doesn't expose
-    next-page metadata. This preserves ``ingested_at`` — the timestamp is
-    captured once at the start of the pagination loop so every row in the
-    final concatenated batch shares the same ``ingested_at`` (the moment
-    the pipeline started reading).
+    Calls /info first to check the window_start. If the window hasn't
+    changed since the last fetch, returns an empty DataFrame immediately
+    (saving 12 API calls and ~5,753 duplicate HANA inserts per skipped cycle).
     """
+    global _last_window_start
+
     if settings.mock_api:
         return _fetch_mock_logs()
+
+    # Check if the window has rolled over since our last fetch.
+    headers = {"Authorization": f"Bearer {settings.sap_api_key}"}
+    info = await _get_with_retry(
+        url=f"{settings.sap_api_url}/info",
+        headers=headers,
+        params={},
+    )
+    window_start = info.get("window_start") if isinstance(info, dict) else None
+    if window_start is not None and window_start == _last_window_start:
+        logger.debug("fetcher.skip_duplicate_window", extra={"window_start": window_start})
+        return pd.DataFrame()
+    _last_window_start = window_start
 
     ingested_at = utcnow()
     collected: list[pd.DataFrame] = []
     page = 1
     while True:
         raw = await _get_with_retry(
-            url=settings.sap_api_url,
-            headers={"Authorization": f"Bearer {settings.sap_api_key}"},
+            url=f"{settings.sap_api_url}/logs/current",
+            headers=headers,
             params={"page": page, "page_size": settings.sap_api_page_size},
         )
         df = parse_raw_response(raw)
@@ -114,13 +128,17 @@ async def fetch_all_logs() -> pd.DataFrame:
             break
         page += 1
 
+    logger.info(
+        "fetcher.window_fetched",
+        extra={"window_start": window_start, "pages": page, "rows": sum(len(d) for d in collected)},
+    )
     if not collected:
         return pd.DataFrame()
     return pd.concat(collected, ignore_index=True)
 
 
 async def poll_logs(
-    on_batch_received: "_BatchCallback",
+    on_batch_received: _BatchCallback,
     *,
     stop_event: asyncio.Event | None = None,
 ) -> None:
@@ -147,7 +165,7 @@ async def poll_logs(
                     await asyncio.sleep(interval)
                 else:
                     await asyncio.wait_for(stop_event.wait(), timeout=interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
     finally:
         await close_client()
@@ -155,9 +173,6 @@ async def poll_logs(
 
 
 # ─── Internal helpers ──────────────────────────────────────────────────────
-
-# Callback signature: ``async def handler(df: pd.DataFrame) -> None``
-from typing import Awaitable, Callable
 
 _BatchCallback = Callable[[pd.DataFrame], Awaitable[None]]
 
@@ -194,7 +209,7 @@ async def _get_with_retry(
             delay *= 0.5 + random.random()  # jitter, 0.5x..1.5x
             await asyncio.sleep(delay)
 
-    assert last_exc is not None  # noqa: S101 — for the type checker
+    assert last_exc is not None
     raise last_exc
 
 
@@ -206,16 +221,26 @@ def _log_retry(attempt: int, exc: Exception) -> None:
 
 
 def _has_next_page(raw: object, current_page: int) -> bool:
-    """Best-effort detection of pagination continuation."""
+    """Detect pagination continuation from the SAP API response envelope.
+
+    The API returns top-level fields: current_page, total_pages, records_in_page,
+    batch_size. Falls back to nested pagination dict for other API shapes.
+    """
     if not isinstance(raw, dict):
         return False
+    # SAP API: top-level total_pages
+    total_pages = raw.get("total_pages")
+    if total_pages is not None:
+        return current_page < int(total_pages)
+    # Fallback: next_page pointer
     if raw.get("next_page") is not None:
         return True
+    # Fallback: nested pagination object
     pagination = raw.get("pagination") or {}
     if isinstance(pagination, dict):
-        total_pages = pagination.get("total_pages")
-        if total_pages is not None:
-            return current_page < int(total_pages)
+        nested_total = pagination.get("total_pages")
+        if nested_total is not None:
+            return current_page < int(nested_total)
         if pagination.get("has_more") is True:
             return True
     return False

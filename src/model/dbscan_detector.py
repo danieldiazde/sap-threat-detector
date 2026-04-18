@@ -20,7 +20,6 @@ from typing import Any
 import numpy as np
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import NearestNeighbors
-
 from src.common.logging import get_logger
 
 logger = get_logger(__name__)

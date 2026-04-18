@@ -24,9 +24,9 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
-
 from src.common.config import settings
 from src.common.logging import get_logger
+from src.common.time_utils import utcnow
 from src.model.dbscan_detector import DBSCANDetector
 from src.model.evaluate import evaluate
 from src.model.features import feature_matrix
@@ -85,6 +85,7 @@ def train(features_df: pd.DataFrame, *, model_type: str | None = None) -> dict[s
 
     metrics = evaluate(model=model, X_scaled=X_scaled, model_type=model_type)
 
+    trained_at = utcnow()
     version_tag = registry.save(
         model=model,
         scaler=scaler,
@@ -99,8 +100,12 @@ def train(features_df: pd.DataFrame, *, model_type: str | None = None) -> dict[s
     report = {
         "version_tag": version_tag,
         "model_type": model_type,
+        "trained_at": trained_at.isoformat(),
         "training_samples": int(len(X)),
+        "feature_columns": list(FEATURE_COLUMNS),
         "hyperparams": hyperparams,
+        "contamination": hyperparams.get("contamination", settings.model_contamination),
+        "cv_scores": metrics.get("cv_anomaly_rate_stability", {}),
         "metrics": metrics,
         "elapsed_seconds": round(elapsed, 3),
     }

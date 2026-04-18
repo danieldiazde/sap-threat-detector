@@ -14,8 +14,6 @@ import pandas as pd
 import pytest
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
-
-from src.model.dbscan_detector import DBSCANDetector
 from src.model.features import extract_features, feature_matrix
 from src.model.schema import FEATURE_COLUMNS
 
@@ -115,7 +113,7 @@ class TestMTTDCalculation:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr("src.model.train.registry", tmp_model_registry)
             mp.setattr("src.model.predict.registry", tmp_model_registry)
-            report = train(features_df)
+            train(features_df)
             reset_active_model()
 
             ingested_at = datetime(2026, 4, 4, 14, 0, 0, tzinfo=timezone.utc)

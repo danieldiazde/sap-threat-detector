@@ -1,8 +1,6 @@
-# =====================================================
-# SAP AI Security — production runtime dependencies
-# Cloud Foundry's python_buildpack reads this file.
-# For local development: pip install -r requirements-dev.txt
-# =====================================================
+# Production-only dependencies for SAP BTP Cloud Foundry deployment.
+# Excludes dashboard (streamlit/plotly/pyarrow) and dev tooling (pytest/ruff)
+# to keep the droplet under the 1G disk quota.
 
 # ─── Core data + ML ─────────────────────────────────────────────────────
 numpy>=1.26,<2.3

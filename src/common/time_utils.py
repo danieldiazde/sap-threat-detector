@@ -1,7 +1,7 @@
 """
 time_utils.py
 -------------
-Datetime helpers. Always UTC, always tz-aware.
+Datetime helpers. Always timezone.utc, always tz-aware.
 
 Owner: Cloud Integration Engineer
 """
@@ -14,12 +14,12 @@ import pandas as pd
 
 
 def utcnow() -> datetime:
-    """Return the current UTC time as a tz-aware datetime."""
+    """Return the current timezone.utc time as a tz-aware datetime."""
     return datetime.now(timezone.utc)
 
 
 def iso(dt: datetime) -> str:
-    """Format a datetime as ISO-8601 with a ``Z`` suffix when in UTC."""
+    """Format a datetime as ISO-8601 with a ``Z`` suffix when in timezone.utc."""
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -27,7 +27,7 @@ def iso(dt: datetime) -> str:
 
 def parse_log_datetime(value: object) -> datetime | None:
     """
-    Parse a log timestamp into a tz-aware UTC datetime.
+    Parse a log timestamp into a tz-aware timezone.utc datetime.
 
     Accepts:
     - ISO-8601 strings ("2026-04-04T14:45:01Z", "2026-04-04T14:45:01+00:00")
@@ -35,7 +35,7 @@ def parse_log_datetime(value: object) -> datetime | None:
     - pandas.Timestamp and datetime instances
     - None / NaN → returns None
 
-    Naive datetimes are assumed to already be UTC.
+    Naive datetimes are assumed to already be timezone.utc.
     """
     if value is None:
         return None
