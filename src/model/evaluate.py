@@ -23,7 +23,6 @@ import numpy as np
 from sklearn.ensemble import IsolationForest
 from sklearn.metrics import precision_recall_fscore_support, silhouette_score
 from sklearn.model_selection import KFold
-
 from src.common.logging import get_logger
 
 logger = get_logger(__name__)
@@ -75,7 +74,7 @@ def evaluate(
     if model_type == "dbscan":
         try:
             metrics["silhouette"] = _safe_silhouette(X_scaled, model)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("evaluate.silhouette_failed", extra={"error": str(exc)})
             metrics["silhouette"] = None
 

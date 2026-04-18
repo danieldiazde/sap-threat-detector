@@ -20,9 +20,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-
 from src.common.logging import get_logger
-from src.model.schema import REQUIRED_LOG_COLUMNS, InvalidLogSchemaError
 from src.model.schema import (
     BRUTE_FORCE_KEYWORDS,
     DENIED_STATUSES,
@@ -30,6 +28,7 @@ from src.model.schema import (
     SQL_INJECTION_KEYWORDS,
     SUSPICIOUS_PATH_FRAGMENTS,
     TEXT_STATUS_TO_CODE,
+    validate_schema,
 )
 
 logger = get_logger(__name__)
@@ -39,6 +38,10 @@ logger = get_logger(__name__)
 STATUS_4XX_LOWER: int = 400
 STATUS_4XX_UPPER: int = 499
 STATUS_5XX_LOWER: int = 500
+
+# LLM log types carry no SOURCE_IP/STATUS/PORT_SERVICE fields — they need a
+# separate feature pipeline (see feat/llm-anomaly-detector).
+LLM_LOG_TYPES: frozenset[str] = frozenset({"LLM_REQUEST", "LLM_ERROR", "LLM_TIMEOUT"})
 
 
 def extract_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -56,13 +59,18 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return _empty_feature_frame()
 
-    missing = [c for c in REQUIRED_LOG_COLUMNS if c not in df.columns]
-    if missing:
-        raise InvalidLogSchemaError(missing=missing, available=list(df.columns))
+    df = validate_schema(df)
 
-    # Drop rows with missing source_ip — LLM-only log lines (LLM_REQUEST,
-    # LLM_ERROR, LLM_TIMEOUT) have no network source and would all collapse
-    # into a single phantom IP during groupby, skewing the model.
+    # Drop LLM log types — no IP/status/port fields; handled by feat/llm-anomaly-detector.
+    if "log_type" in df.columns:
+        before = len(df)
+        df = df[~df["log_type"].str.upper().isin(LLM_LOG_TYPES)].copy()
+        dropped = before - len(df)
+        if dropped:
+            logger.debug("features.llm_logs_filtered", extra={"dropped": dropped})
+
+    # Safety net for non-LLM rows with malformed source_ip — otherwise they
+    # collapse into a single phantom IP during groupby and skew the model.
     before = len(df)
     df = df[df["source_ip"].astype(str).str.strip().ne("")]
     df = df.dropna(subset=["source_ip"])
@@ -72,6 +80,7 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
             "features.extract: dropped rows with missing source_ip",
             extra={"dropped": dropped, "remaining": len(df)},
         )
+
     if df.empty:
         return _empty_feature_frame()
 

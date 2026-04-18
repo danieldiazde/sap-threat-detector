@@ -16,13 +16,9 @@ from __future__ import annotations
 from typing import Any
 
 import pandas as pd
-
 from src.common.logging import get_logger
 from src.model.schema import (
     ALL_LOG_COLUMNS,
-    REQUIRED_LOG_COLUMNS,
-    InvalidLogSchemaError,
-    validate_schema,
 )
 
 logger = get_logger(__name__)

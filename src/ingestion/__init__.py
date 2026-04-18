@@ -3,8 +3,8 @@
 from src.ingestion.log_parser import (
     normalize_columns,
     parse_raw_response,
-    validate_schema,
 )
+from src.model.schema import validate_schema
 from src.ingestion.sap_log_fetcher import (
     close_client,
     fetch_all_logs,

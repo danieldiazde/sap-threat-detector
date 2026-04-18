@@ -17,8 +17,9 @@ Owner: Data Architect & Backend Developer
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, AsyncIterator
+from typing import TYPE_CHECKING, Any
 
 from src.common.config import settings
 from src.common.logging import get_logger
@@ -63,7 +64,7 @@ class HanaPool:
             conn = await self._queue.get()
             try:
                 await asyncio.to_thread(conn.close)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.warning("hana_pool.close_connection_failed", extra={"error": str(exc)})
         self._closed = True
 
@@ -82,7 +83,7 @@ class HanaPool:
 
         if not self._initialized:
             await self.initialize()
-        assert self._queue is not None  # noqa: S101 — narrowing for type checker
+        assert self._queue is not None
 
         conn = await self._queue.get()
         try:
@@ -100,7 +101,7 @@ class HanaPool:
                     return False
                 await asyncio.to_thread(self._ping_sync, conn)
                 return True
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("hana_pool.ping_failed", extra={"error": str(exc)})
             return False
 

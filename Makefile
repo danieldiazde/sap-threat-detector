@@ -27,7 +27,7 @@ help:
 # ─── Environment ───────────────────────────────────────────────────────────
 
 install:
-	pip install -r requirements.txt
+	pip install -r requirements-dev.txt
 
 lint:
 	ruff check src/ tests/ scripts/

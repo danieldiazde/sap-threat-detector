@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import random
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -122,7 +121,7 @@ def generate(
         spike_ip = rng.choice(spike_ips)
         spike_start = base_time + timedelta(minutes=rng.randint(10, 50))
         spike_rows = max(50, int(rows * 0.02))
-        for i in range(spike_rows):
+        for _i in range(spike_rows):
             offset = timedelta(seconds=rng.randint(0, 300))
             records.append({
                 "datetime": (spike_start + offset).strftime("%Y-%m-%d %H:%M:%S"),

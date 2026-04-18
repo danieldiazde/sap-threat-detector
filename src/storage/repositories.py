@@ -21,7 +21,6 @@ from datetime import datetime
 from typing import Any
 
 import pandas as pd
-
 from src.common.config import settings
 from src.common.logging import get_logger
 from src.common.time_utils import utcnow
@@ -120,13 +119,12 @@ class LogRepository:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                """
-                SELECT TOP ? DATETIME, SOURCE_IP, PORT_SERVICE,
+                f"""
+                SELECT TOP {int(limit)} DATETIME, SOURCE_IP, PORT_SERVICE,
                              EVENT_DESCRIPTION, STATUS, LOG_TYPE, INGESTED_AT
                 FROM SECURITY_LOGS
                 ORDER BY INGESTED_AT DESC
                 """,
-                (limit,),
             )
             cols = [d[0].lower() for d in cursor.description]
             return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
@@ -231,14 +229,13 @@ class AnomalyRepository:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                """
-                SELECT TOP ? DETECTED_AT, SOURCE_IP, THREAT_LEVEL, ANOMALY_SCORE,
+                f"""
+                SELECT TOP {int(limit)} DETECTED_AT, SOURCE_IP, THREAT_LEVEL, ANOMALY_SCORE,
                              TOTAL_REQUESTS, ERROR_RATE, PIPELINE_MTTD_MS, E2E_MTTD_MS,
                              WEBHOOK_SENT, INCIDENT_REPORT_PATH
                 FROM ANOMALIES
                 ORDER BY DETECTED_AT DESC
                 """,
-                (limit,),
             )
             cols = [d[0].lower() for d in cursor.description]
             return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
@@ -249,13 +246,14 @@ class AnomalyRepository:
     def _query_mttd_sync(conn: Any, window_minutes: int) -> list[int]:
         cursor = conn.cursor()
         try:
+            offset_seconds = -(window_minutes * 60)
             cursor.execute(
                 """
                 SELECT PIPELINE_MTTD_MS FROM ANOMALIES
-                WHERE DETECTED_AT >= ADD_SECONDS(CURRENT_TIMESTAMP, ? * -60)
+                WHERE DETECTED_AT >= ADD_SECONDS(CURRENT_TIMESTAMP, ?)
                   AND PIPELINE_MTTD_MS IS NOT NULL
                 """,
-                (window_minutes,),
+                (offset_seconds,),
             )
             return [int(row[0]) for row in cursor.fetchall() if row[0] is not None]
         finally:

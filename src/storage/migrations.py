@@ -69,7 +69,7 @@ def _apply_sync(conn: Any, statements: list[str]) -> None:
         for stmt in statements:
             try:
                 cursor.execute(stmt)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 msg = str(exc).lower()
                 if any(hint in msg for hint in _ALREADY_EXISTS_HINTS):
                     logger.debug("migrations.skip_existing", extra={"preview": stmt[:60]})

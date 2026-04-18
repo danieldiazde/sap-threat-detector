@@ -22,7 +22,7 @@ Owner: Security Analyst & Visualization Lead
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import os
 from typing import Any
 
 import pandas as pd
@@ -37,10 +37,6 @@ st.set_page_config(page_title="SAP AI Security SOC", page_icon="\U0001f6e1\ufe0f
 
 
 def _get_refresh_interval() -> int:
-    """Read DASHBOARD_REFRESH_SECONDS from env (not importing settings to
-    avoid importing heavy ML libs in the Streamlit process)."""
-    import os
-
     try:
         return int(os.getenv("DASHBOARD_REFRESH_SECONDS", "5")) * 1000
     except ValueError:
@@ -58,7 +54,7 @@ except ImportError:
 
 # ─── Data loading helpers ────────────────────────────────────────────────
 
-API_BASE = "http://localhost:8000"
+API_BASE = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 
 @st.cache_data(ttl=5)
@@ -97,6 +93,19 @@ def _fetch_readiness() -> dict[str, Any]:
         return resp.json()
     except Exception:
         return {}
+
+
+@st.cache_data(ttl=5)
+def _fetch_anomalies(limit: int = 50) -> list[dict]:
+    """Fetch recent anomalies from GET /anomalies."""
+    import httpx
+
+    try:
+        resp = httpx.get(f"{API_BASE}/anomalies", params={"limit": limit}, timeout=3.0)
+        resp.raise_for_status()
+        return resp.json().get("anomalies", [])
+    except Exception:
+        return []
 
 
 def _load_fallback_logs() -> pd.DataFrame:
@@ -252,8 +261,20 @@ st.divider()
 # ─── Active Threats Table ────────────────────────────────────────────────
 
 st.subheader("Active Threats")
-if anomaly_count > 0:
-    st.markdown(f"Total anomalies detected: **{anomaly_count}**")
+anomalies = _fetch_anomalies() if api_available else []
+if anomalies:
+    threats_df = pd.DataFrame(anomalies)
+    display_cols = [c for c in [
+        "detected_at", "source_ip", "threat_level", "anomaly_score",
+        "pipeline_mttd_ms", "total_requests", "error_rate",
+        "webhook_sent", "incident_report_path",
+    ] if c in threats_df.columns]
+    st.dataframe(
+        threats_df[display_cols].sort_values("detected_at", ascending=False)
+        if "detected_at" in threats_df.columns else threats_df[display_cols],
+        use_container_width=True,
+    )
+    st.caption(f"{len(anomalies)} anomalies — total lifetime: {anomaly_count}")
 else:
     st.info("No active threats. The system is monitoring.")
 

@@ -19,13 +19,16 @@ Owner: Cloud Integration Engineer
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, status
-
 from src.api.schemas import (
+    AnomaliesResponse,
+    AnomalyRecord,
     AnomalyResult,
     HealthResponse,
     MetricsResponse,
@@ -41,10 +44,12 @@ from src.common.time_utils import utcnow
 from src.ingestion.sap_log_fetcher import close_client as close_fetcher_client
 from src.model.features import extract_features
 from src.model.predict import predict
+from src.model.train import train as train_model
 from src.model.versioning import ModelNotFoundError, registry
 from src.pipeline import Pipeline
 from src.storage.migrations import apply_schema
 from src.storage.pool import pool
+from src.storage.repositories import anomaly_repository
 
 logger = get_logger(__name__)
 
@@ -52,6 +57,29 @@ logger = get_logger(__name__)
 
 _pipeline: Pipeline | None = None
 _pipeline_task: asyncio.Task[None] | None = None
+
+
+def _bootstrap_model() -> None:
+    """Train an initial model from sample data if no model exists on disk."""
+    from pathlib import Path
+
+    import pandas as pd
+    from src.ingestion.log_parser import normalize_columns
+
+    sample_path = Path("data/samples/sample_logs.csv")
+    if not sample_path.exists():
+        logger.warning("api.bootstrap_model.no_sample_data", extra={"path": str(sample_path)})
+        return
+
+    logger.info("api.bootstrap_model.start", extra={"path": str(sample_path)})
+    df = normalize_columns(pd.read_csv(sample_path))
+    features_df = extract_features(df)
+    if features_df.empty:
+        logger.warning("api.bootstrap_model.no_features")
+        return
+
+    report = train_model(features_df)
+    logger.info("api.bootstrap_model.done", extra={"version": report.get("version_tag")})
 
 
 @asynccontextmanager
@@ -66,9 +94,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     logger.info("api.startup", extra={"environment": settings.environment})
 
-    # Storage
-    await pool.initialize()
-    await apply_schema()
+    # Storage — non-fatal: app boots even if HANA is temporarily unreachable
+    try:
+        await pool.initialize()
+        await apply_schema()
+    except Exception as exc:
+        logger.error("api.startup.hana_failed", extra={"error": str(exc)})
+
+    # Bootstrap model if none exists
+    if registry.current_version() is None:
+        await asyncio.to_thread(_bootstrap_model)
 
     # Pipeline
     _pipeline = Pipeline()
@@ -84,10 +119,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _pipeline.request_stop()
     if _pipeline_task is not None:
         _pipeline_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await _pipeline_task
-        except asyncio.CancelledError:
-            pass
     await close_fetcher_client()
     await pool.close()
 
@@ -108,11 +141,17 @@ app = FastAPI(
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     """Liveness probe — always returns 200."""
+    snap = metrics.snapshot()
+    task_alive = _pipeline_task is not None and not _pipeline_task.done()
+    pipeline_alive = _pipeline is not None and _pipeline.is_running
     return HealthResponse(
         status="ok",
         mock_api=settings.mock_api,
         mock_webhook=settings.mock_webhook,
         mock_hana=settings.mock_hana,
+        scheduler_running=pipeline_alive and task_alive,
+        pipeline_runs_total=snap["counters"]["pipeline_runs_total"],
+        last_run_at=snap["last_run_at"],
     )
 
 
@@ -205,3 +244,26 @@ async def predict_endpoint(request: PredictRequest) -> PredictResponse:
 async def metrics_endpoint() -> dict[str, Any]:
     """Return the current metrics snapshot as JSON."""
     return metrics.snapshot()
+
+
+@app.get("/anomalies", response_model=AnomaliesResponse)
+async def anomalies_endpoint(limit: int = 50) -> AnomaliesResponse:
+    """Return the most recent detected anomalies, newest first."""
+    limit = min(limit, 200)
+    rows = await anomaly_repository.recent_anomalies(limit=limit)
+    records = [
+        AnomalyRecord(
+            detected_at=str(r.get("detected_at") or ""),
+            source_ip=str(r.get("source_ip") or ""),
+            threat_level=str(r.get("threat_level") or ""),
+            anomaly_score=float(r.get("anomaly_score") or 0.0),
+            total_requests=int(r.get("total_requests") or 0),
+            error_rate=float(r.get("error_rate") or 0.0),
+            pipeline_mttd_ms=int(r["pipeline_mttd_ms"]) if r.get("pipeline_mttd_ms") is not None else None,
+            e2e_mttd_ms=int(r["e2e_mttd_ms"]) if r.get("e2e_mttd_ms") is not None else None,
+            webhook_sent=bool(r.get("webhook_sent", False)),
+            incident_report_path=r.get("incident_report_path"),
+        )
+        for r in rows
+    ]
+    return AnomaliesResponse(anomalies=records, total=len(records))
