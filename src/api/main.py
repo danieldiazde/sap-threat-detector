@@ -57,6 +57,19 @@ logger = get_logger(__name__)
 
 _pipeline: Pipeline | None = None
 _pipeline_task: asyncio.Task[None] | None = None
+_keepalive_task: asyncio.Task[None] | None = None
+
+
+async def hana_keepalive() -> None:
+    """Run SELECT 1 FROM DUMMY every 10 minutes to prevent HANA auto-shutdown."""
+    while True:
+        await asyncio.sleep(600)
+        try:
+            ok = await pool.ping()
+            if not ok:
+                logger.warning("hana_keepalive.ping_failed")
+        except Exception as exc:
+            logger.warning("hana_keepalive.error", extra={"error": str(exc)})
 
 
 def _bootstrap_model() -> None:
@@ -110,6 +123,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _pipeline_task = asyncio.create_task(
         _pipeline.run_forever(), name="detection-pipeline"
     )
+    _keepalive_task = asyncio.create_task(
+        hana_keepalive(), name="hana-keepalive"
+    )
 
     yield
 
@@ -121,6 +137,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _pipeline_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await _pipeline_task
+    if _keepalive_task is not None:
+        _keepalive_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _keepalive_task
     await close_fetcher_client()
     await pool.close()
 
