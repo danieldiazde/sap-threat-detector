@@ -33,6 +33,20 @@ logger = get_logger(__name__)
 LOG_INSERT_BATCH_SIZE: int = 500
 
 
+def _to_int_or_none(v: object) -> int | None:
+    try:
+        return int(float(v)) if v is not None and str(v).strip() else None  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return None
+
+
+def _to_float_or_none(v: object) -> float | None:
+    try:
+        return float(v) if v is not None and str(v).strip() else None  # type: ignore[arg-type]
+    except (ValueError, TypeError):
+        return None
+
+
 class LogRepository:
     """Persist and query raw security logs."""
 
@@ -95,6 +109,22 @@ class LogRepository:
                     r.get("event_description"),
                     r.get("status"),
                     r.get("log_type"),
+                    r.get("request_path"),
+                    r.get("sap_application"),
+                    r.get("region_code"),
+                    r.get("macro_region"),
+                    r.get("http_method"),
+                    r.get("sap_source_type"),
+                    r.get("sap_app_env"),
+                    _to_int_or_none(r.get("llm_total_tokens")),
+                    _to_float_or_none(r.get("llm_cost_usd")),
+                    r.get("llm_finish_reason"),
+                    r.get("llm_status"),
+                    _to_float_or_none(r.get("llm_response_time_ms")),
+                    r.get("llm_prompt_category"),
+                    r.get("llm_error_message"),
+                    r.get("llm_model_id"),
+                    _to_int_or_none(r.get("llm_prompt_tokens")),
                     r.get("ingested_at"),
                 )
                 for r in records
@@ -105,8 +135,14 @@ class LogRepository:
                     """
                     INSERT INTO SECURITY_LOGS
                     (DATETIME, SOURCE_IP, PORT_SERVICE, EVENT_DESCRIPTION,
-                     STATUS, LOG_TYPE, INGESTED_AT)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                     STATUS, LOG_TYPE, REQUEST_PATH, SAP_APPLICATION,
+                     REGION_CODE, MACRO_REGION, HTTP_METHOD,
+                     SAP_SOURCE_TYPE, SAP_APP_ENV,
+                     LLM_TOTAL_TOKENS, LLM_COST_USD, LLM_FINISH_REASON,
+                     LLM_STATUS, LLM_RESPONSE_TIME_MS, LLM_PROMPT_CATEGORY,
+                     LLM_ERROR_MESSAGE, LLM_MODEL_ID, LLM_PROMPT_TOKENS,
+                     INGESTED_AT)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     chunk,
                 )
