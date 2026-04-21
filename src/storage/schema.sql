@@ -19,6 +19,22 @@ CREATE TABLE SECURITY_LOGS (
     EVENT_DESCRIPTION NVARCHAR(500),
     STATUS            NVARCHAR(50),
     LOG_TYPE          NVARCHAR(50),
+    REQUEST_PATH      NVARCHAR(500),              -- heathers_request_path (typo in API preserved)
+    SAP_APPLICATION   NVARCHAR(100),              -- sap_function_application
+    REGION_CODE       NVARCHAR(20),               -- e.g. "NL-AMS2", "US-TX"
+    MACRO_REGION      NVARCHAR(50),               -- e.g. "Europe", "North America"
+    HTTP_METHOD       NVARCHAR(10),               -- GET | POST | DELETE | PUT | PATCH
+    SAP_SOURCE_TYPE   NVARCHAR(50),               -- BTP-Event | BAPI | RFC | OData | REST | SOAP
+    SAP_APP_ENV       NVARCHAR(50),               -- sandbox | development | staging | production | qa
+    LLM_TOTAL_TOKENS  INTEGER,                    -- null for non-LLM rows
+    LLM_COST_USD      DOUBLE,                     -- null for non-LLM rows
+    LLM_FINISH_REASON NVARCHAR(50),               -- stop | length | content_filter
+    LLM_STATUS        NVARCHAR(50),               -- success | error
+    LLM_RESPONSE_TIME_MS DOUBLE,                  -- ms per LLM call
+    LLM_PROMPT_CATEGORY  NVARCHAR(100),           -- Finance | HR | Support | etc.
+    LLM_ERROR_MESSAGE    NVARCHAR(500),           -- populated when llm_status = error
+    LLM_MODEL_ID         NVARCHAR(100),           -- gpt-4 | claude-3-opus | etc.
+    LLM_PROMPT_TOKENS    INTEGER,                 -- input tokens; >50k signals data exfiltration
     INGESTED_AT       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
 );
 

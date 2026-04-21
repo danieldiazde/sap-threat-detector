@@ -24,6 +24,7 @@ from src.common.logging import get_logger
 from src.model.schema import (
     BRUTE_FORCE_KEYWORDS,
     DENIED_STATUSES,
+    DESTRUCTIVE_METHODS,
     FEATURE_COLUMNS,
     SQL_INJECTION_KEYWORDS,
     SUSPICIOUS_PATH_FRAGMENTS,
@@ -129,6 +130,11 @@ def _enrich_raw(df: pd.DataFrame) -> pd.DataFrame:
         lambda d: any(kw.upper() in d for kw in BRUTE_FORCE_KEYWORDS)
     )
     df["is_denied"] = df["status_text"].isin(DENIED_STATUSES)
+    df["is_destructive"] = (
+        df["http_method"].str.upper().isin(DESTRUCTIVE_METHODS)
+        if "http_method" in df.columns
+        else False
+    )
     return df
 
 
@@ -156,6 +162,20 @@ def _ip_features(group: pd.DataFrame) -> pd.Series:
     interarrival_std = _interarrival_std(group["datetime"])
     brute_force_score = brute_hits / total if total else 0.0
 
+    app_diversity = (
+        int(group["sap_application"].dropna().nunique())
+        if "sap_application" in group.columns
+        else 0
+    )
+    region_diversity = (
+        int(group["region_code"].dropna().nunique())
+        if "region_code" in group.columns
+        else 0
+    )
+    destructive_count = (
+        int(group["is_destructive"].sum()) if "is_destructive" in group.columns else 0
+    )
+
     return pd.Series(
         {
             "total_requests": total,
@@ -170,6 +190,9 @@ def _ip_features(group: pd.DataFrame) -> pd.Series:
             "port_diversity": port_diversity,
             "brute_force_score": brute_force_score,
             "interarrival_std": interarrival_std,
+            "app_diversity": app_diversity,
+            "region_diversity": region_diversity,
+            "is_destructive_ratio": destructive_count / total if total else 0.0,
         }
     )
 

@@ -63,6 +63,14 @@ _COLUMN_ALIASES: dict[str, str] = {
     "type": "log_type",
     "category": "log_type",
     "source": "log_type",
+    # request_path — SAP API has a typo: "heathers_" instead of "headers_"
+    "heathers_request_path": "request_path",
+    "headers_request_path": "request_path",
+    # sap_application
+    "sap_function_application": "sap_application",
+    # http_method
+    "headers_http_request_method": "http_method",
+    # region_code, macro_region, sap_source_type, sap_app_env, llm_* already match canonical names
 }
 
 

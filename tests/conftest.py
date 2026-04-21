@@ -11,7 +11,7 @@ Provides:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -159,4 +159,4 @@ def in_memory_metrics() -> MetricsRegistry:
 
 def make_utc(year: int = 2026, month: int = 4, day: int = 4, hour: int = 14) -> datetime:
     """Convenience for creating a tz-aware timezone.utc datetime."""
-    return datetime(year, month, day, hour, tzinfo=timezone.utc)
+    return datetime(year, month, day, hour, tzinfo=UTC)
