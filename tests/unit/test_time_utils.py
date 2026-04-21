@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
 from src.common.time_utils import elapsed_ms, iso, parse_log_datetime, utcnow
@@ -12,7 +12,7 @@ class TestUtcnow:
     def test_returns_tz_aware(self):
         now = utcnow()
         assert now.tzinfo is not None
-        assert now.tzinfo == timezone.utc
+        assert now.tzinfo == UTC
 
 
 class TestIso:
@@ -23,7 +23,7 @@ class TestIso:
         assert "2026-04-04" in result
 
     def test_utc_datetime(self):
-        dt = datetime(2026, 4, 4, 14, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 4, 4, 14, 0, 0, tzinfo=UTC)
         assert iso(dt) == "2026-04-04T14:00:00Z"
 
 
@@ -52,13 +52,13 @@ class TestParseLogDatetime:
 
 class TestElapsedMs:
     def test_positive_delta(self):
-        start = datetime(2026, 4, 4, 14, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2026, 4, 4, 14, 0, 1, tzinfo=timezone.utc)
+        start = datetime(2026, 4, 4, 14, 0, 0, tzinfo=UTC)
+        end = datetime(2026, 4, 4, 14, 0, 1, tzinfo=UTC)
         assert elapsed_ms(start, end) == 1000
 
     def test_negative_delta_returns_zero(self):
-        start = datetime(2026, 4, 4, 14, 0, 1, tzinfo=timezone.utc)
-        end = datetime(2026, 4, 4, 14, 0, 0, tzinfo=timezone.utc)
+        start = datetime(2026, 4, 4, 14, 0, 1, tzinfo=UTC)
+        end = datetime(2026, 4, 4, 14, 0, 0, tzinfo=UTC)
         assert elapsed_ms(start, end) == 0
 
     def test_naive_datetimes(self):

@@ -136,7 +136,7 @@ def main() -> None:
             print("  " + "-" * 46)
             for lvl, cnt in threat_rows:
                 lvl_pct = cnt / total_anomalies * 100 if total_anomalies else 0
-                print(f"  {str(lvl):<18}  {cnt:>8,}  {lvl_pct:>14.1f}%")
+                print(f"  {lvl!s:<18}  {cnt:>8,}  {lvl_pct:>14.1f}%")
 
         print()
         hr("═")
