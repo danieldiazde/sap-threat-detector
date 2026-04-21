@@ -35,7 +35,11 @@
       "Bash(PYTHONPATH=. python scripts/delete_hana_duplicates.py)",
       "Bash(cf logs *)",
       "Bash(env)",
-      "Bash(make deploy *)"
+      "Bash(make deploy *)",
+      "Bash(git stash *)",
+      "Bash(PYTHONPATH=. python -m ruff check scripts/wake_hana.py scripts/audit_ingestion.py scripts/hana_summary.py .github/workflows/hana-watchdog.yml)",
+      "Bash(PYTHONPATH=. python -m ruff check src/ tests/ scripts/)",
+      "Bash(PYTHONPATH=. python -m ruff check --fix src/ tests/ scripts/)"
     ]
   }
 }

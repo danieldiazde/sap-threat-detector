@@ -8,6 +8,7 @@ Usage:
 """
 
 import sys
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -47,7 +48,7 @@ def main() -> None:
 
     try:
         # ── Q2: Last 10 ingestion windows ────────────────────────────────
-        section("Q2 — LAST 10 × 30-MIN WINDOWS")
+        section("Q2 — LAST 10 x 30-MIN WINDOWS")
         cur.execute("""
             SELECT
                 FLOOR(SECONDS_BETWEEN('2000-01-01', DATETIME) / 1800) AS WINDOW_ID,
@@ -63,7 +64,7 @@ def main() -> None:
         print(f"  {'WINDOW_ID':>12}  {'LOGS':>6}  {'WINDOW_START':^22}  {'WINDOW_END':^22}")
         print("  " + "-" * 68)
         for wid, cnt, wstart, wend in rows:
-            print(f"  {int(wid):>12}  {cnt:>6,}  {str(wstart):^22}  {str(wend):^22}")
+            print(f"  {int(wid):>12}  {cnt:>6,}  {wstart!s:^22}  {wend!s:^22}")
 
         if rows:
             counts = [r[1] for r in rows]
@@ -114,7 +115,7 @@ def main() -> None:
                 print(f"  {'DATETIME':^22}  {'SOURCE_IP':^16}  {'LOG_TYPE':^20}  {'COUNT':>5}")
                 print("  " + "-" * 68)
                 for dt, ip, lt, cnt in duperows:
-                    print(f"  {str(dt):^22}  {str(ip):^16}  {str(lt):^20}  {cnt:>5}")
+                    print(f"  {dt!s:^22}  {ip!s:^16}  {lt!s:^20}  {cnt:>5}")
             else:
                 print("  (none found at second-level granularity)")
 

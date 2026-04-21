@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -15,7 +15,7 @@ class TestBuildIncidentReport:
             "source_ip": "203.0.113.45",
             "threat_level": "high",
             "anomaly_score": -0.42,
-            "detected_at": datetime(2026, 4, 4, 14, 49, tzinfo=timezone.utc),
+            "detected_at": datetime(2026, 4, 4, 14, 49, tzinfo=UTC),
             "pipeline_mttd_ms": 150,
             "e2e_mttd_ms": 2500,
             "model_version": "v1",
@@ -36,7 +36,7 @@ class TestBuildIncidentReport:
             "source_ip": "10.0.0.1",
             "threat_level": "high",
             "sql_injection_hits": 5,
-            "detected_at": datetime(2026, 4, 4, 14, 0, tzinfo=timezone.utc),
+            "detected_at": datetime(2026, 4, 4, 14, 0, tzinfo=UTC),
         }
         report = build_incident_report(anomaly, pd.DataFrame())
         assert "SQL injection" in report
@@ -46,7 +46,7 @@ class TestBuildIncidentReport:
             "source_ip": "10.0.0.1",
             "threat_level": "high",
             "brute_force_score": 0.5,
-            "detected_at": datetime(2026, 4, 4, 14, 0, tzinfo=timezone.utc),
+            "detected_at": datetime(2026, 4, 4, 14, 0, tzinfo=UTC),
         }
         report = build_incident_report(anomaly, pd.DataFrame())
         assert "Brute-force" in report
@@ -55,7 +55,7 @@ class TestBuildIncidentReport:
         anomaly = {
             "source_ip": "10.0.0.1",
             "threat_level": "low",
-            "detected_at": datetime(2026, 4, 4, 14, 0, tzinfo=timezone.utc),
+            "detected_at": datetime(2026, 4, 4, 14, 0, tzinfo=UTC),
         }
         report = build_incident_report(anomaly, pd.DataFrame())
         assert "No evidence rows" in report
