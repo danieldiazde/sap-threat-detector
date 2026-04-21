@@ -31,6 +31,22 @@ REQUIRED_LOG_COLUMNS: Final[tuple[str, ...]] = (
 OPTIONAL_LOG_COLUMNS: Final[tuple[str, ...]] = (
     "port_service",
     "log_type",
+    "request_path",
+    "sap_application",
+    "region_code",
+    "macro_region",
+    "http_method",
+    "sap_source_type",
+    "sap_app_env",
+    "llm_total_tokens",
+    "llm_cost_usd",
+    "llm_finish_reason",
+    "llm_status",
+    "llm_response_time_ms",
+    "llm_prompt_category",
+    "llm_error_message",
+    "llm_model_id",
+    "llm_prompt_tokens",
 )
 
 ALL_LOG_COLUMNS: Final[tuple[str, ...]] = REQUIRED_LOG_COLUMNS + OPTIONAL_LOG_COLUMNS
@@ -56,6 +72,9 @@ FEATURE_COLUMNS: Final[tuple[str, ...]] = (
     "brute_force_score",
     "interarrival_std",
     "request_rate_zscore",
+    "app_diversity",
+    "region_diversity",
+    "is_destructive_ratio",
 )
 
 
@@ -114,6 +133,9 @@ BRUTE_FORCE_KEYWORDS: Final[tuple[str, ...]] = (
     "authentication attempt",
     "authentication failure",
 )
+
+# HTTP methods that modify or delete resources — used for is_destructive_ratio feature.
+DESTRUCTIVE_METHODS: Final[frozenset[str]] = frozenset({"DELETE", "PUT", "PATCH"})
 
 
 class InvalidLogSchemaError(ValueError):

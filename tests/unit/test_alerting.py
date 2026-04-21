@@ -2,28 +2,28 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pandas as pd
-from src.alerting.sap_webhook import build_alert_id, _build_payload
+from src.alerting.sap_webhook import _build_payload, build_alert_id
 
 
 class TestAlertId:
     def test_deterministic(self):
-        dt = datetime(2026, 4, 4, 14, 45, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 4, 4, 14, 45, 0, tzinfo=UTC)
         a = build_alert_id("10.0.0.1", "high", dt)
         b = build_alert_id("10.0.0.1", "high", dt)
         assert a == b
 
     def test_different_ips_differ(self):
-        dt = datetime(2026, 4, 4, 14, 45, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 4, 4, 14, 45, 0, tzinfo=UTC)
         a = build_alert_id("10.0.0.1", "high", dt)
         b = build_alert_id("10.0.0.2", "high", dt)
         assert a != b
 
     def test_same_minute_same_id(self):
-        dt1 = datetime(2026, 4, 4, 14, 45, 0, tzinfo=timezone.utc)
-        dt2 = datetime(2026, 4, 4, 14, 45, 59, tzinfo=timezone.utc)
+        dt1 = datetime(2026, 4, 4, 14, 45, 0, tzinfo=UTC)
+        dt2 = datetime(2026, 4, 4, 14, 45, 59, tzinfo=UTC)
         assert build_alert_id("10.0.0.1", "high", dt1) == build_alert_id("10.0.0.1", "high", dt2)
 
 
@@ -33,7 +33,7 @@ class TestBuildPayload:
             "source_ip": "203.0.113.45",
             "threat_level": "high",
             "anomaly_score": -0.42,
-            "detected_at": datetime(2026, 4, 4, 14, 49, 30, tzinfo=timezone.utc),
+            "detected_at": datetime(2026, 4, 4, 14, 49, 30, tzinfo=UTC),
             "total_requests": 3500,
             "error_rate": 0.87,
             "pipeline_mttd_ms": 150,
@@ -56,7 +56,7 @@ class TestBuildPayload:
         anomaly = {
             "source_ip": "10.0.0.1",
             "threat_level": "medium",
-            "detected_at": datetime(2026, 4, 4, 14, 0, tzinfo=timezone.utc),
+            "detected_at": datetime(2026, 4, 4, 14, 0, tzinfo=UTC),
         }
         evidence = pd.DataFrame([{"event_description": f"row-{i}"} for i in range(20)])
         payload = _build_payload(anomaly, evidence)
