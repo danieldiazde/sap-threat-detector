@@ -8,21 +8,23 @@ Owner: Cloud Integration Engineer
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pandas as pd
+
+_UTC = timezone.utc  # noqa: UP017 — datetime.UTC requires Python 3.11; CF runs 3.10
 
 
 def utcnow() -> datetime:
     """Return the current timezone.utc time as a tz-aware datetime."""
-    return datetime.now(UTC)
+    return datetime.now(_UTC)
 
 
 def iso(dt: datetime) -> str:
     """Format a datetime as ISO-8601 with a ``Z`` suffix when in timezone.utc."""
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+        dt = dt.replace(tzinfo=_UTC)
+    return dt.astimezone(_UTC).isoformat().replace("+00:00", "Z")
 
 
 def parse_log_datetime(value: object) -> datetime | None:
@@ -44,7 +46,7 @@ def parse_log_datetime(value: object) -> datetime | None:
     if isinstance(value, pd.Timestamp):
         value = value.to_pydatetime()
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
+        return value if value.tzinfo else value.replace(tzinfo=_UTC)
 
     try:
         ts = pd.to_datetime(value, errors="coerce", utc=True)
@@ -65,8 +67,8 @@ def elapsed_ms(start: datetime, end: datetime | None = None) -> int:
     if end is None:
         end = utcnow()
     if start.tzinfo is None:
-        start = start.replace(tzinfo=UTC)
+        start = start.replace(tzinfo=_UTC)
     if end.tzinfo is None:
-        end = end.replace(tzinfo=UTC)
+        end = end.replace(tzinfo=_UTC)
     delta_ms = int((end - start).total_seconds() * 1000)
     return max(delta_ms, 0)
