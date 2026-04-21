@@ -119,6 +119,67 @@ def main() -> None:
             else:
                 print("  (none found at second-level granularity)")
 
+        # ── Q5: Anomaly threat-level distribution ────────────────────────
+        section("Q5 — ANOMALY THREAT-LEVEL DISTRIBUTION")
+        cur.execute("""
+            SELECT THREAT_LEVEL, COUNT(*) AS TOTAL
+            FROM ANOMALIES
+            GROUP BY THREAT_LEVEL
+            ORDER BY TOTAL DESC
+        """)
+        rows = cur.fetchall()
+        if rows:
+            grand = sum(r[1] for r in rows)
+            print(f"  {'THREAT_LEVEL':^12}  {'COUNT':>8}  {'%':>6}")
+            print("  " + "-" * 32)
+            for level, cnt in rows:
+                pct = cnt / grand * 100 if grand else 0
+                print(f"  {level!s:^12}  {cnt:>8,}  {pct:>5.1f}%")
+            print(f"\n  Total anomalies: {grand:,}")
+        else:
+            print("  No rows in ANOMALIES table.")
+
+        # ── Q6: LOG_TYPE distribution in SECURITY_LOGS ───────────────────
+        section("Q6 — LOG_TYPE DISTRIBUTION (SECURITY_LOGS)")
+        cur.execute("""
+            SELECT LOG_TYPE, COUNT(*) AS TOTAL
+            FROM SECURITY_LOGS
+            GROUP BY LOG_TYPE
+            ORDER BY TOTAL DESC
+        """)
+        rows = cur.fetchall()
+        if rows:
+            grand = sum(r[1] for r in rows)
+            print(f"  {'LOG_TYPE':^28}  {'COUNT':>8}  {'%':>6}")
+            print("  " + "-" * 48)
+            for lt, cnt in rows:
+                pct = cnt / grand * 100 if grand else 0
+                print(f"  {lt!s:^28}  {cnt:>8,}  {pct:>5.1f}%")
+            print(f"\n  Total log rows: {grand:,}")
+        else:
+            print("  No rows in SECURITY_LOGS table.")
+
+        # ── Q7: Last 3 anomalies with all fields ─────────────────────────
+        section("Q7 — LAST 3 ANOMALIES (ALL FIELDS)")
+        cur.execute("""
+            SELECT TOP 3
+                DETECTED_AT, INGESTED_AT, SOURCE_IP, THREAT_LEVEL,
+                ANOMALY_SCORE, TOTAL_REQUESTS, ERROR_RATE,
+                PIPELINE_MTTD_MS, E2E_MTTD_MS,
+                ALERT_ID, DEDUP_KEY, WEBHOOK_SENT, INCIDENT_REPORT_PATH
+            FROM ANOMALIES
+            ORDER BY DETECTED_AT DESC
+        """)
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+        if rows:
+            for i, row in enumerate(rows, 1):
+                print(f"\n  -- Anomaly #{i} --")
+                for col, val in zip(cols, row, strict=False):
+                    print(f"    {col:<24}: {val}")
+        else:
+            print("  No anomalies found.")
+
     finally:
         cur.close()
         conn.close()
