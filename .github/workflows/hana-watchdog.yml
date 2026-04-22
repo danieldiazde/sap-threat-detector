@@ -13,12 +13,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check /health endpoint
+      - name: Check /ready endpoint
         id: health
         run: |
-          HTTP_CODE=$(curl -s -o /tmp/health_body.json -w "%{http_code}" \
+          # /ready actually probes HANA via pool.ping(); /health only reports
+          # whether HANA_HOST env var is set, which is useless as a liveness
+          # signal in prod where the env is always populated.
+          HTTP_CODE=$(curl -s -o /tmp/ready_body.json -w "%{http_code}" \
             --max-time 15 \
-            https://sap-threat-detector.cfapps.us10-001.hana.ondemand.com/health || echo "000")
+            https://sap-threat-detector.cfapps.us10-001.hana.ondemand.com/ready || echo "000")
 
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
 
@@ -27,13 +30,21 @@ jobs:
             echo "needs_wake=true" >> $GITHUB_OUTPUT
           else
             echo "HTTP $HTTP_CODE — response body:"
-            cat /tmp/health_body.json
-            MOCK_HANA=$(cat /tmp/health_body.json | python3 -c \
-              "import sys,json; d=json.load(sys.stdin); print(str(d.get('mock_hana','false')).lower())" \
-              2>/dev/null || echo "unknown")
-            echo "mock_hana=$MOCK_HANA" >> $GITHUB_OUTPUT
-            if [ "$MOCK_HANA" = "true" ]; then
-              echo "mock_hana=true → HANA is down"
+            cat /tmp/ready_body.json
+            echo ""
+            HANA_OK=$(python3 -c "
+          import json
+          try:
+              with open('/tmp/ready_body.json') as f:
+                  d = json.load(f)
+              hana = next((c for c in d.get('checks', []) if c.get('name') == 'hana'), None)
+              print('true' if hana and hana.get('ok') else 'false')
+          except Exception:
+              print('false')
+          ")
+            echo "hana_ok=$HANA_OK" >> $GITHUB_OUTPUT
+            if [ "$HANA_OK" != "true" ]; then
+              echo "HANA is not reachable per /ready → will wake"
               echo "needs_wake=true" >> $GITHUB_OUTPUT
             else
               echo "HANA is connected and healthy"
@@ -93,22 +104,30 @@ jobs:
         run: |
           echo "Waiting 30s for app to boot..."
           sleep 30
-          HTTP_CODE=$(curl -s -o /tmp/health_after.json -w "%{http_code}" \
+          HTTP_CODE=$(curl -s -o /tmp/ready_after.json -w "%{http_code}" \
             --max-time 15 \
-            https://sap-threat-detector.cfapps.us10-001.hana.ondemand.com/health || echo "000")
+            https://sap-threat-detector.cfapps.us10-001.hana.ondemand.com/ready || echo "000")
           echo "Post-restart HTTP: $HTTP_CODE"
-          cat /tmp/health_after.json || true
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "App still unhealthy after restart (HTTP $HTTP_CODE)"
+          cat /tmp/ready_after.json || true
+          echo ""
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "503" ]; then
+            echo "App did not respond after restart (HTTP $HTTP_CODE)"
             cf logs sap-threat-detector --recent
             exit 1
           fi
-          MOCK_HANA=$(cat /tmp/health_after.json | python3 -c \
-            "import sys,json; d=json.load(sys.stdin); print(str(d.get('mock_hana','?')).lower())" \
-            2>/dev/null || echo "?")
-          echo "mock_hana after restart: $MOCK_HANA"
-          if [ "$MOCK_HANA" = "true" ]; then
-            echo "WARNING: App restarted but HANA still in mock mode"
+          HANA_OK=$(python3 -c "
+          import json
+          try:
+              with open('/tmp/ready_after.json') as f:
+                  d = json.load(f)
+              hana = next((c for c in d.get('checks', []) if c.get('name') == 'hana'), None)
+              print('true' if hana and hana.get('ok') else 'false')
+          except Exception:
+              print('false')
+          ")
+          echo "hana_ok after restart: $HANA_OK"
+          if [ "$HANA_OK" != "true" ]; then
+            echo "App restarted but HANA is still unreachable per /ready"
             cf logs sap-threat-detector --recent
             exit 1
           fi
