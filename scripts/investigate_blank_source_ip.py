@@ -16,6 +16,7 @@ Run:
 from __future__ import annotations
 
 import sys
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -185,7 +186,7 @@ def main() -> None:
         ORDER BY blank_cnt DESC
     """)
 
-    total_other = q(cur, f"SELECT COUNT(*) FROM SECURITY_LOGS WHERE SOURCE_IP != ''")[0][0]
+    total_other = q(cur, "SELECT COUNT(*) FROM SECURITY_LOGS WHERE SOURCE_IP != ''")[0][0]
 
     print(f"  Total non-blank-IP rows: {total_other:,}")
     print(f"  Total blank-IP rows    : {total_blank:,}")
