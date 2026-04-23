@@ -64,6 +64,18 @@ async def close_client() -> None:
         _client = None
 
 
+def reset_window_start() -> None:
+    """
+    Un-acknowledge the current window so the next cycle re-fetches it.
+
+    Call this when processing fails after ``fetch_all_logs`` already committed
+    ``_last_window_start`` — e.g. a HANA insert error or a predict failure.
+    Without this, the window would be silently skipped for up to 30 minutes.
+    """
+    global _last_window_start
+    _last_window_start = None
+
+
 # ─── Public API ────────────────────────────────────────────────────────────
 
 
@@ -108,7 +120,9 @@ async def fetch_all_logs() -> pd.DataFrame:
     if window_start is not None and window_start == _last_window_start:
         logger.debug("fetcher.skip_duplicate_window", extra={"window_start": window_start})
         return pd.DataFrame()
-    _last_window_start = window_start
+
+    # NOTE: _last_window_start is committed AFTER the pagination loop, not here.
+    # Committing early would permanently skip the window if any page fetch fails.
 
     ingested_at = utcnow()
     collected: list[pd.DataFrame] = []
@@ -134,6 +148,11 @@ async def fetch_all_logs() -> pd.DataFrame:
                 extra={"max_pages": MAX_PAGES_PER_WINDOW, "window_start": window_start},
             )
             break
+
+    # Commit only after all pages fetched successfully. If _get_with_retry raised
+    # above, this line is never reached and the window stays unacknowledged so
+    # the next 30-second cycle retries it from page 1.
+    _last_window_start = window_start
 
     logger.info(
         "fetcher.window_fetched",
@@ -195,7 +214,13 @@ async def _get_with_retry(
             response = await client.get(url, headers=headers, params=params)
             response.raise_for_status()
             return response.json()
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
+        except httpx.ConnectError as exc:
+            last_exc = exc
+            _log_retry(attempt, exc)
+            # Stale connection pool — recreate the client so the next retry
+            # gets fresh connections rather than reusing broken ones.
+            await close_client()
+        except (httpx.TimeoutException, httpx.ReadError) as exc:
             last_exc = exc
             _log_retry(attempt, exc)
         except httpx.HTTPStatusError as exc:
@@ -238,7 +263,11 @@ def _has_next_page(raw: object, current_page: int) -> bool:
     # SAP API: top-level total_pages
     total_pages = raw.get("total_pages")
     if total_pages is not None:
-        return current_page < int(total_pages)
+        try:
+            return current_page < int(total_pages)
+        except (ValueError, TypeError):
+            logger.warning("fetcher.invalid_total_pages", extra={"value": total_pages})
+            return False
     # Fallback: next_page pointer
     if raw.get("next_page") is not None:
         return True
@@ -247,7 +276,11 @@ def _has_next_page(raw: object, current_page: int) -> bool:
     if isinstance(pagination, dict):
         nested_total = pagination.get("total_pages")
         if nested_total is not None:
-            return current_page < int(nested_total)
+            try:
+                return current_page < int(nested_total)
+            except (ValueError, TypeError):
+                logger.warning("fetcher.invalid_total_pages", extra={"value": nested_total})
+                return False
         if pagination.get("has_more") is True:
             return True
     return False

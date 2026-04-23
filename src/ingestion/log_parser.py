@@ -96,7 +96,10 @@ def parse_raw_response(payload: Any) -> pd.DataFrame:
                 records = payload[key]
                 break
         else:
-            logger.warning("parse_raw_response: no known envelope key in payload")
+            logger.warning(
+                "parse_raw_response.unknown_envelope",
+                extra={"actual_keys": list(payload.keys())},
+            )
             return pd.DataFrame()
     else:
         logger.warning(
