@@ -39,6 +39,8 @@ MODEL_FILE: str = "model.joblib"
 SCALER_FILE: str = "scaler.joblib"
 MANIFEST_FILE: str = "manifest.json"
 LATEST_POINTER: str = "latest.txt"
+LATEST_LEGACY_POINTER: str = "latest-legacy.txt"
+LATEST_MODERN_POINTER: str = "latest-modern.txt"
 
 
 class ModelNotFoundError(RuntimeError):
@@ -61,6 +63,10 @@ class LoadedModel:
     def model_type(self) -> str:
         return str(self.manifest.get("model_type", "isolation_forest"))
 
+    @property
+    def feature_set(self) -> str:
+        return str(self.manifest.get("feature_set", "modern"))
+
 
 class ModelRegistry:
     """File-system backed model registry under ``settings.model_dir``."""
@@ -81,6 +87,9 @@ class ModelRegistry:
     def _latest_pointer_path(self) -> Path:
         return self._root / LATEST_POINTER
 
+    def _feature_set_pointer(self, feature_set: str) -> Path:
+        return self._root / (LATEST_LEGACY_POINTER if feature_set == "legacy" else LATEST_MODERN_POINTER)
+
     # ── Save ──────────────────────────────────────────────────────────
 
     def save(
@@ -93,12 +102,15 @@ class ModelRegistry:
         hyperparams: dict[str, Any],
         training_samples: int,
         cv_scores: dict[str, Any] | None = None,
+        feature_set: str = "modern",
         notes: str = "",
     ) -> str:
         """
         Persist *model* + *scaler* + manifest and return the version tag.
 
-        The new version becomes ``latest`` immediately.
+        ``feature_set`` is either ``"legacy"`` (13-feature, pre-expansion rows)
+        or ``"modern"`` (16-feature, post-expansion rows).  Both the
+        feature-set-specific pointer and the generic ``latest.txt`` are updated.
         """
         trained_at = utcnow()
         version_tag = _make_version_tag(trained_at)
@@ -111,6 +123,7 @@ class ModelRegistry:
         manifest: dict[str, Any] = {
             "version_tag": version_tag,
             "model_type": model_type,
+            "feature_set": feature_set,
             "trained_at": trained_at.isoformat(),
             "feature_columns": list(feature_columns),
             "hyperparams": dict(hyperparams),
@@ -124,6 +137,8 @@ class ModelRegistry:
             json.dumps(manifest, indent=2, default=str), encoding="utf-8"
         )
 
+        # Update per-feature-set pointer and the generic latest pointer.
+        self._feature_set_pointer(feature_set).write_text(version_tag, encoding="utf-8")
         self._latest_pointer_path().write_text(version_tag, encoding="utf-8")
         self._cache.clear()
 
@@ -132,6 +147,7 @@ class ModelRegistry:
             extra={
                 "version_tag": version_tag,
                 "model_type": model_type,
+                "feature_set": feature_set,
                 "samples": training_samples,
             },
         )
@@ -171,6 +187,24 @@ class ModelRegistry:
             extra={"version_tag": resolved, "model_type": loaded.model_type},
         )
         return loaded
+
+    def load_for_feature_set(self, feature_set: str) -> LoadedModel:
+        """
+        Load the latest model saved for *feature_set* (``"legacy"`` or
+        ``"modern"``).  Falls back to the generic ``latest`` pointer when no
+        feature-set-specific pointer exists (e.g. pre-split deployments that
+        only have a single model on disk).
+        """
+        pointer = self._feature_set_pointer(feature_set)
+        if pointer.exists():
+            tag = pointer.read_text(encoding="utf-8").strip()
+            if tag:
+                try:
+                    return self.load(tag)
+                except ModelNotFoundError:
+                    pass
+        # Fallback: generic latest (single-model deployment or first boot)
+        return self.load("latest")
 
     def invalidate_cache(self) -> None:
         """Drop all cached bundles. Used by tests and after retraining."""

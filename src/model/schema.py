@@ -77,6 +77,17 @@ FEATURE_COLUMNS: Final[tuple[str, ...]] = (
     "is_destructive_ratio",
 )
 
+# Features available on pre-expansion rows (ingested before commit 5b5d777, 2026-04-21).
+# app_diversity, region_diversity, and is_destructive_ratio all derive from expansion-only
+# columns (sap_application, region_code, http_method) that are NULL on legacy rows.
+# The legacy model trains exclusively on these 13 features to avoid zero-bias corruption.
+_EXPANSION_ONLY_FEATURES: Final[frozenset[str]] = frozenset(
+    {"app_diversity", "region_diversity", "is_destructive_ratio"}
+)
+FEATURE_COLUMNS_LEGACY: Final[tuple[str, ...]] = tuple(
+    c for c in FEATURE_COLUMNS if c not in _EXPANSION_ONLY_FEATURES
+)
+
 
 # ─── Status code buckets ───────────────────────────────────────────────────
 #
