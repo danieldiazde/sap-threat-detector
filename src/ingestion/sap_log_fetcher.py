@@ -33,10 +33,11 @@ logger = get_logger(__name__)
 # ─── Constants ─────────────────────────────────────────────────────────────
 
 MOCK_DATA_PATH: Path = Path("data/samples/sample_logs.csv")
-HTTP_TIMEOUT_SECONDS: float = 10.0
+HTTP_TIMEOUT_SECONDS: float = 30.0  # raised from 10s — LLM payload pages are larger
 RETRY_MAX_ATTEMPTS: int = 3
 RETRY_BASE_DELAY: float = 0.5
 RETRY_MAX_DELAY: float = 5.0
+MAX_PAGES_PER_WINDOW: int = 200  # ~100k rows at page_size=500; circuit-breaker for runaway windows
 
 # ─── Shared HTTP client ────────────────────────────────────────────────────
 #
@@ -127,6 +128,12 @@ async def fetch_all_logs() -> pd.DataFrame:
         if not _has_next_page(raw, page):
             break
         page += 1
+        if page > MAX_PAGES_PER_WINDOW:
+            logger.warning(
+                "fetcher.max_pages_reached",
+                extra={"max_pages": MAX_PAGES_PER_WINDOW, "window_start": window_start},
+            )
+            break
 
     logger.info(
         "fetcher.window_fetched",

@@ -147,3 +147,63 @@ infra/          CF manifest
 - `pipeline_mttd_ms` = detected_at - ingested_at (internal processing latency)
 - `e2e_mttd_ms` = detected_at - log.datetime (real-world detection time)
 - MTTD is the key competition metric (40% of evaluation score)
+
+## Schema evolution — SECURITY_LOGS
+
+The `SECURITY_LOGS` table was expanded in commit `5b5d777` (2026-04-21) from
+6 columns to 22. Rows ingested before that commit have NULLs in the 16 new
+columns. The training pipeline currently fills NaN with 0 (see the
+`# TODO(schema-audit)` comment in `src/model/features.py::feature_matrix`),
+which silently biases pre-expansion rows toward "zero-diversity" profiles.
+
+**Before making any change that depends on `FEATURE_COLUMNS` or the feature
+matrix, read the latest `data/reports/schema_audit_<date>.md`** (generated
+by `python scripts/audit_schema_expansion.py`) and the decision table in
+`docs/MODEL_JOURNAL.md`.
+
+### Original 6 columns
+
+| Column | Type | Notes |
+|---|---|---|
+| `DATETIME` | TIMESTAMP | NOT NULL |
+| `SOURCE_IP` | NVARCHAR(50) | NOT NULL; primary grouping key |
+| `PORT_SERVICE` | NVARCHAR(50) | |
+| `EVENT_DESCRIPTION` | NVARCHAR(500) | |
+| `STATUS` | NVARCHAR(50) | |
+| `LOG_TYPE` | NVARCHAR(50) | Added very early; treat as pre-expansion |
+
+### 16 columns added in `5b5d777`
+
+`REQUEST_PATH`, `SAP_APPLICATION`, `REGION_CODE`, `MACRO_REGION`,
+`HTTP_METHOD`, `SAP_SOURCE_TYPE`, `SAP_APP_ENV`, and the nine LLM columns
+(`LLM_TOTAL_TOKENS`, `LLM_COST_USD`, `LLM_FINISH_REASON`, `LLM_STATUS`,
+`LLM_RESPONSE_TIME_MS`, `LLM_PROMPT_CATEGORY`, `LLM_ERROR_MESSAGE`,
+`LLM_MODEL_ID`, `LLM_PROMPT_TOKENS`). The nine `LLM_*` columns are NULL by
+design for non-LLM traffic — their NULL rate is not a data-quality signal.
+
+### Fields the SAP API returns that we deliberately discard
+
+We ingest ~22 of the ~44 fields the API returns. The ones dropped are either
+Elasticsearch/envelope metadata or LLM-internal payloads:
+
+`_id`, `_ignored`, `_index`, `_score`, `@version`, `@event_time_requested`,
+`event_code_version`, `event_hash`, `headers_content_type`,
+`headers_http_host`, `region_id`, `region_name`, `sap_llm_response_size`,
+`sap_llm_response_time`, `llm_provider`, `llm_prompt_id`, `llm_prompt`,
+`llm_completion_tokens`, `llm_response_size_bytes`, `llm_temperature`,
+`llm_top_p`, `llm_stream`.
+
+If you need one of these, add it to `src/ingestion/log_parser.py`'s
+`_COLUMN_ALIASES`, extend `src/storage/schema.sql`, and follow the migration
+playbook below. **Do not silently fetch and drop** — wire it end-to-end or
+leave it out.
+
+### Migration playbook (adding columns to an existing SECURITY_LOGS)
+
+`src/storage/migrations.py` only runs `CREATE`. For production tables that
+already exist, use the idempotent ALTER pattern from
+`scripts/migrate_add_columns.py`: wrap each `ALTER TABLE ... ADD (...)` in a
+try/except that catches HANA's "already exists" error so the script is safe
+to re-run. Never re-introduce a blanket `.fillna(0)` in the feature pipeline
+after adding a new column — expand the null-handling strategy in
+`src/model/features.py` instead.

@@ -1,6 +1,15 @@
 .PHONY: help install lint format test test-unit test-integration test-model \
         run api dashboard mock train pipeline clean deploy
 
+# Prefer local venv binaries when the venv exists. No-op when binaries are
+# already on PATH (e.g. inside a CI container).
+VENV_BIN := $(CURDIR)/.venv/bin
+export PATH := $(VENV_BIN):$(PATH)
+
+# Make `from src.*` imports work regardless of how the script is launched
+# (streamlit prepends the *script* dir to sys.path, not the project root).
+export PYTHONPATH := $(CURDIR):$(PYTHONPATH)
+
 # ─── Help ──────────────────────────────────────────────────────────────────
 
 help:

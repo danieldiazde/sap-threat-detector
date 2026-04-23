@@ -27,8 +27,7 @@ import pandas as pd
 from src.common.config import settings
 from src.common.logging import get_logger
 from src.ingestion.log_parser import normalize_columns
-from src.model.features import extract_features
-from src.model.train import train
+from src.model.train import train_split
 
 logger = get_logger(__name__)
 
@@ -61,41 +60,34 @@ def main() -> None:
     df = normalize_columns(df)
     print(f"Loaded {len(df)} log rows from {data_path}")
 
-    # Feature extraction
-    features_df = extract_features(df)
-    print(f"Extracted features for {len(features_df)} unique IPs")
-
-    if features_df.empty:
-        print("Error: no features extracted — check your data.")
-        sys.exit(1)
-
-    # Train
+    # Train (train_split handles extract_features + legacy/modern split internally)
     model_type = args.model_type or settings.model_type
-    print(f"Training {model_type} model...")
-    report = train(features_df, model_type=model_type)
+    print(f"Training {model_type} model(s)...")
+    reports = train_split(df, model_type=model_type)
 
-    # Report
-    print("\nTraining complete:")
-    print(f"  Version tag:      {report['version_tag']}")
-    print(f"  Model type:       {report['model_type']}")
-    print(f"  Training samples: {report['training_samples']}")
-    print(f"  Elapsed:          {report['elapsed_seconds']}s")
-    print(f"  Anomaly rate:     {report['metrics'].get('anomaly_rate', 'n/a')}")
+    # Report one section per split
+    print(f"\nTraining complete ({len(reports)} model(s) trained):")
+    for split, report in reports.items():
+        print(f"\n  [{split.upper()}]")
+        print(f"  Version tag:      {report['version_tag']}")
+        print(f"  Model type:       {report['model_type']}")
+        print(f"  Training samples: {report['training_samples']}")
+        print(f"  Feature columns:  {len(report['feature_columns'])}")
+        print(f"  Elapsed:          {report['elapsed_seconds']}s")
+        print(f"  Anomaly rate:     {report['metrics'].get('anomaly_rate', 'n/a')}")
 
-    score_dist = report["metrics"].get("score_distribution", {})
-    if score_dist:
-        print(f"  Score range:      [{score_dist.get('min', '?'):.4f}, {score_dist.get('max', '?'):.4f}]")
-        print(f"  Score median:     {score_dist.get('median', '?'):.4f}")
+        score_dist = report["metrics"].get("score_distribution", {})
+        if score_dist:
+            print(f"  Score range:      [{score_dist.get('min', '?'):.4f}, {score_dist.get('max', '?'):.4f}]")
+            print(f"  Score median:     {score_dist.get('median', '?'):.4f}")
 
-    cv = report["metrics"].get("cv_anomaly_rate_stability", {})
-    if cv:
-        print(f"  CV stability:     mean={cv.get('mean', '?'):.4f}, std={cv.get('std', '?'):.4f}")
+        cv = report["metrics"].get("cv_anomaly_rate_stability", {})
+        if cv:
+            print(f"  CV stability:     mean={cv.get('mean', '?'):.4f}, std={cv.get('std', '?'):.4f}")
 
-    # Write human-readable report
-    report_path = Path(settings.model_dir) / report["version_tag"] / "training_report.json"
-    report_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
-    print(f"\nFull report: {report_path}")
-    print(f"Model dir:   {settings.model_dir / report['version_tag']}/")
+        report_path = Path(settings.model_dir) / report["version_tag"] / "training_report.json"
+        report_path.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+        print(f"  Full report: {report_path}")
 
 
 if __name__ == "__main__":

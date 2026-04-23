@@ -62,7 +62,10 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
 
     df = validate_schema(df)
 
-    # Drop LLM log types — no IP/status/port fields; handled by feat/llm-anomaly-detector.
+    # LLM telemetry rows carry no SOURCE_IP, STATUS, HTTP_METHOD, or PORT_SERVICE —
+    # they are internal SAP AI platform events, not network requests, and must never
+    # enter the Isolation Forest. A dedicated LLM threat model (prompt injection,
+    # token exhaustion) is tracked in docs/MODEL_JOURNAL.md under Future Work.
     if "log_type" in df.columns:
         before = len(df)
         df = df[~df["log_type"].str.upper().isin(LLM_LOG_TYPES)].copy()
@@ -257,15 +260,23 @@ def _ensure_all_columns(features: pd.DataFrame) -> pd.DataFrame:
     return features[existing + remaining]
 
 
-def feature_matrix(features_df: pd.DataFrame) -> np.ndarray:
+def feature_matrix(
+    features_df: pd.DataFrame,
+    *,
+    columns: tuple[str, ...] | None = None,
+) -> np.ndarray:
     """
-    Select :data:`FEATURE_COLUMNS` from *features_df* and return a NumPy
-    matrix ready for scaler/model input. Missing columns are filled with 0
-    so callers can mix partial input; logged as a warning.
+    Select *columns* from *features_df* and return a NumPy matrix ready for
+    scaler/model input. Defaults to :data:`FEATURE_COLUMNS` (modern, 16-feature
+    set). Pass :data:`FEATURE_COLUMNS_LEGACY` for the 13-feature legacy model.
+
+    Missing columns are filled with 0 so callers can mix partial input; logged
+    as a warning.
     """
-    missing = [c for c in FEATURE_COLUMNS if c not in features_df.columns]
+    cols = columns if columns is not None else FEATURE_COLUMNS
+    missing = [c for c in cols if c not in features_df.columns]
     if missing:
-        logger.warning("features.missing_columns", extra={"missing": missing})
+        logger.warning("features.missing_columns", extra={"missing": list(missing)})
         for col in missing:
             features_df[col] = 0.0
-    return features_df[list(FEATURE_COLUMNS)].fillna(0).to_numpy(dtype="float64")
+    return features_df[list(cols)].fillna(0).to_numpy(dtype="float64")

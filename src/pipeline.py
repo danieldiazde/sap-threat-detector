@@ -179,29 +179,31 @@ class Pipeline:
             def _do_train() -> dict:
                 from pathlib import Path
 
-                from src.model.train import train
+                from src.model.train import train_split
 
-                # Save combined logs so train() can read them
                 Path(RETRAIN_DATA_PATH).parent.mkdir(parents=True, exist_ok=True)
                 combined.to_csv(RETRAIN_DATA_PATH, index=False)
 
-                return train(combined)
+                # train_split handles extract_features + legacy/modern split.
+                # Returns {"legacy": <report>, "modern": <report>}.
+                return train_split(combined)
 
-            report = await asyncio.to_thread(_do_train)
+            reports = await asyncio.to_thread(_do_train)
 
             # Hot-swap: clear the in-process model cache so next predict()
-            # loads the freshly saved model automatically
+            # loads the freshly saved models automatically
             reset_active_model()
 
-            # Persist model metadata to HANA MODEL_VERSIONS table
-            await model_version_repository.register(report)
+            # Persist both model metadata records to HANA MODEL_VERSIONS table
+            for report in reports.values():
+                await model_version_repository.register(report)
 
             logger.info(
                 "pipeline.retrain.done",
                 extra={
-                    "version": report.get("version_tag"),
-                    "samples": report.get("training_samples"),
-                    "anomaly_rate": report.get("anomaly_rate"),
+                    "splits": list(reports.keys()),
+                    "versions": {k: v.get("version_tag") for k, v in reports.items()},
+                    "samples": {k: v.get("training_samples") for k, v in reports.items()},
                 },
             )
         except Exception as exc:

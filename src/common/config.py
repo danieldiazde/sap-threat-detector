@@ -33,6 +33,9 @@ DEFAULT_POLL_INTERVAL_SECONDS: Final[int] = 30
 DEFAULT_RETRAIN_EVERY_N_CYCLES: Final[int] = 480  # 480 x 30s = 4 hours
 DEFAULT_PAGE_SIZE: Final[int] = 500
 DEFAULT_MODEL_CONTAMINATION: Final[float] = 0.05
+DEFAULT_MODEL_N_ESTIMATORS: Final[int] = 200
+DEFAULT_MODEL_MAX_SAMPLES: Final[str] = "auto"
+DEFAULT_MODEL_RANDOM_STATE: Final[int] = 42
 DEFAULT_MODEL_CONTEXT_WINDOW_MINUTES: Final[int] = 60
 DEFAULT_ANOMALY_SCORE_THRESHOLD: Final[float] = -0.1
 DEFAULT_ALERT_HIGH_THRESHOLD: Final[float] = -0.3
@@ -41,6 +44,7 @@ DEFAULT_ANOMALY_DEDUP_TTL_SECONDS: Final[int] = 300
 DEFAULT_HANA_POOL_SIZE: Final[int] = 4
 DEFAULT_HANA_PORT: Final[int] = 443
 DEFAULT_DASHBOARD_REFRESH_SECONDS: Final[int] = 5
+DEFAULT_API_BASE_URL: Final[str] = "http://localhost:8000"
 DEFAULT_MTTD_HIGH_THRESHOLD_MS: Final[int] = 5000
 DEFAULT_MODEL_TYPE: Final[str] = "isolation_forest"
 DEFAULT_MODEL_VERSION: Final[str] = "latest"
@@ -98,6 +102,9 @@ class Settings:
     model_type: str
     model_version: str
     model_contamination: float
+    model_n_estimators: int
+    model_max_samples: str
+    model_random_state: int
     model_context_window_minutes: int
     anomaly_score_threshold: float
     alert_high_threshold: float
@@ -114,6 +121,7 @@ class Settings:
 
     # --- Dashboard ---
     dashboard_refresh_seconds: int
+    api_base_url: str
     mttd_high_threshold_ms: int
 
     # --- Paths ---
@@ -163,6 +171,9 @@ class Settings:
             model_type=_env_str("MODEL_TYPE", DEFAULT_MODEL_TYPE),
             model_version=_env_str("MODEL_VERSION", DEFAULT_MODEL_VERSION),
             model_contamination=_env_float("MODEL_CONTAMINATION", DEFAULT_MODEL_CONTAMINATION),
+            model_n_estimators=_env_int("MODEL_N_ESTIMATORS", DEFAULT_MODEL_N_ESTIMATORS),
+            model_max_samples=_env_str("MODEL_MAX_SAMPLES", DEFAULT_MODEL_MAX_SAMPLES),
+            model_random_state=_env_int("MODEL_RANDOM_STATE", DEFAULT_MODEL_RANDOM_STATE),
             model_context_window_minutes=_env_int(
                 "MODEL_CONTEXT_WINDOW_MINUTES", DEFAULT_MODEL_CONTEXT_WINDOW_MINUTES
             ),
@@ -189,6 +200,7 @@ class Settings:
             dashboard_refresh_seconds=_env_int(
                 "DASHBOARD_REFRESH_SECONDS", DEFAULT_DASHBOARD_REFRESH_SECONDS
             ),
+            api_base_url=_env_str("API_BASE_URL", DEFAULT_API_BASE_URL),
             mttd_high_threshold_ms=_env_int(
                 "MTTD_HIGH_THRESHOLD_MS", DEFAULT_MTTD_HIGH_THRESHOLD_MS
             ),

@@ -29,7 +29,7 @@ from src.common.logging import get_logger
 from src.common.metrics import metrics
 from src.common.time_utils import elapsed_ms, utcnow
 from src.model.features import feature_matrix
-from src.model.schema import FEATURE_COLUMNS
+from src.model.schema import FEATURE_COLUMNS, FEATURE_COLUMNS_LEGACY
 from src.model.versioning import LoadedModel, ModelNotFoundError, registry
 
 logger = get_logger(__name__)
@@ -76,6 +76,20 @@ def clear_context_window() -> None:
 # ─── Prediction ────────────────────────────────────────────────────────────
 
 
+# Features that distinguish post-expansion rows from pre-expansion rows.
+# app_diversity and region_diversity use nunique() which returns 0 when
+# all values in the group are NaN — the reliable legacy signal.
+_EXPANSION_DISCRIMINATORS: tuple[str, ...] = ("app_diversity", "region_diversity")
+
+
+def _modern_mask(features_df: pd.DataFrame) -> pd.Series:
+    """True for rows with any non-zero expansion discriminator."""
+    cols = [c for c in _EXPANSION_DISCRIMINATORS if c in features_df.columns]
+    if not cols:
+        return pd.Series(False, index=features_df.index)
+    return features_df[cols].gt(0).any(axis=1)
+
+
 def predict(
     features_df: pd.DataFrame,
     *,
@@ -85,43 +99,64 @@ def predict(
     """
     Score *features_df* and return a DataFrame with detection columns added.
 
-    Args:
-        features_df: Per-IP feature matrix from :func:`extract_features`.
-        ingested_at: When the pipeline received this batch (used for
-            pipeline MTTD).
-        batch_min_log_time: The earliest log event time in the batch (used
-            for end-to-end MTTD). If omitted, e2e_mttd is set to None.
+    Rows are routed to the legacy model (13-feature, FEATURE_COLUMNS_LEGACY)
+    or the modern model (16-feature, FEATURE_COLUMNS) based on whether any
+    expansion-only features are non-zero.  Both models are loaded from the
+    registry; the modern model falls back to the legacy model (and vice versa)
+    when only one is available on disk.
 
     Added columns:
         anomaly_score (float), is_anomaly (bool), threat_level (str),
         detected_at (datetime), pipeline_mttd_ms (int), e2e_mttd_ms (int|None),
-        multi_bucket_count (int).
+        multi_bucket_count (int), model_version (str), model_type (str).
     """
     if features_df.empty:
         return _empty_output()
-
-    loaded = _load_active_model()
-    X = feature_matrix(features_df)
-    X_scaled = loaded.scaler.transform(X)
-    scores = loaded.model.decision_function(X_scaled)
 
     detected_at = utcnow()
     pipeline_mttd = elapsed_ms(ingested_at, detected_at)
     e2e_mttd = elapsed_ms(batch_min_log_time, detected_at) if batch_min_log_time else None
 
+    legacy_model, modern_model = _load_models()
+    mask = _modern_mask(features_df)
+
+    # Use each model's own feature_columns from the manifest — this handles
+    # the fallback case where load_for_feature_set returns the same model for
+    # both slots (e.g. first boot before any split retrain has occurred).
+    legacy_cols = tuple(legacy_model.manifest.get("feature_columns") or list(FEATURE_COLUMNS_LEGACY))
+    modern_cols = tuple(modern_model.manifest.get("feature_columns") or list(FEATURE_COLUMNS))
+
+    parts: list[pd.DataFrame] = []
+    for subset_mask, loaded, feat_cols in (
+        (~mask, legacy_model, legacy_cols),
+        (mask, modern_model, modern_cols),
+    ):
+        subset = features_df[subset_mask]
+        if subset.empty:
+            continue
+        X = feature_matrix(subset, columns=feat_cols)
+        X_scaled = loaded.scaler.transform(X)
+        scores = loaded.model.decision_function(X_scaled)
+
+        part = subset.copy()
+        part["anomaly_score"] = scores
+        part["is_anomaly"] = scores < settings.anomaly_score_threshold
+        part["threat_level"] = _assign_threat_levels(scores)
+        part["model_version"] = loaded.version_tag
+        part["model_type"] = loaded.model_type
+        parts.append(part)
+
+    if not parts:
+        return _empty_output()
+
+    out = pd.concat(parts, ignore_index=True)
     multi_bucket = _update_context(detected_at, features_df)
 
-    out = features_df.copy()
-    out["anomaly_score"] = scores
-    out["is_anomaly"] = scores < settings.anomaly_score_threshold
-    out["threat_level"] = _assign_threat_levels(scores)
     out["detected_at"] = detected_at
     out["ingested_at"] = ingested_at
     out["pipeline_mttd_ms"] = int(pipeline_mttd)
     out["e2e_mttd_ms"] = e2e_mttd
     out["multi_bucket_count"] = out["source_ip"].map(multi_bucket).fillna(0).astype(int)
-    out["model_version"] = loaded.version_tag
-    out["model_type"] = loaded.model_type
 
     metrics.observe_pipeline_mttd(pipeline_mttd)
     if e2e_mttd is not None:
@@ -135,7 +170,8 @@ def predict(
             "anomalies": anomaly_count,
             "pipeline_mttd_ms": pipeline_mttd,
             "e2e_mttd_ms": e2e_mttd,
-            "model_version": loaded.version_tag,
+            "legacy_rows": int((~mask).sum()),
+            "modern_rows": int(mask.sum()),
         },
     )
     return out
@@ -159,31 +195,40 @@ def _assign_threat_levels(scores: np.ndarray) -> np.ndarray:
 
 # ─── Model loading ─────────────────────────────────────────────────────────
 
-_active_model: LoadedModel | None = None
+_active_legacy: LoadedModel | None = None
+_active_modern: LoadedModel | None = None
 
 
-def _load_active_model() -> LoadedModel:
-    """Cache the active model bundle at module level to avoid disk hits."""
-    global _active_model
-    if _active_model is None or _active_model.version_tag != _requested_version():
+def _load_models() -> tuple[LoadedModel, LoadedModel]:
+    """
+    Return (legacy_model, modern_model), loading from disk on first call or
+    after ``reset_active_model()``.
+
+    When only one model exists on disk (single-model deployment or first
+    boot before a split retrain), both slots resolve to the same bundle via
+    the ``load_for_feature_set`` fallback.
+    """
+    global _active_legacy, _active_modern
+    if _active_legacy is None:
         try:
-            _active_model = registry.load(settings.model_version)
+            _active_legacy = registry.load_for_feature_set("legacy")
         except ModelNotFoundError:
-            logger.error("predict.no_model_available")
+            logger.error("predict.no_legacy_model")
             raise
-    return _active_model
-
-
-def _requested_version() -> str:
-    if settings.model_version == "latest":
-        return registry.current_version() or "latest"
-    return settings.model_version
+    if _active_modern is None:
+        try:
+            _active_modern = registry.load_for_feature_set("modern")
+        except ModelNotFoundError:
+            logger.error("predict.no_modern_model")
+            raise
+    return _active_legacy, _active_modern
 
 
 def reset_active_model() -> None:
-    """Force the next ``predict()`` call to reload from disk."""
-    global _active_model
-    _active_model = None
+    """Force the next ``predict()`` call to reload both models from disk."""
+    global _active_legacy, _active_modern
+    _active_legacy = None
+    _active_modern = None
     registry.invalidate_cache()
 
 
