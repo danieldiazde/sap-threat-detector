@@ -30,7 +30,7 @@ from src.common.config import settings
 from src.common.logging import get_logger
 from src.common.metrics import metrics
 from src.common.time_utils import utcnow
-from src.ingestion.sap_log_fetcher import fetch_all_logs
+from src.ingestion.sap_log_fetcher import fetch_all_logs, reset_window_start
 from src.model.features import extract_features
 from src.model.predict import anomalies_only, predict, reset_active_model
 from src.storage.repositories import anomaly_repository, log_repository, model_version_repository
@@ -77,82 +77,90 @@ class Pipeline:
             metrics.incr_pipeline_runs()
             return {"status": "no_data", "logs": 0}
 
-        metrics.incr_logs_processed(len(df))
-        await log_repository.insert_logs(df, ingested_at)
+        # Everything after this point uses the fetched data. If any step fails,
+        # reset_window_start() un-acknowledges the window so the next 30-second
+        # cycle re-fetches it rather than silently skipping it for up to 30 minutes.
+        try:
+            metrics.incr_logs_processed(len(df))
+            await log_repository.insert_logs(df, ingested_at)
 
-        # ANALYZE
-        features_df = extract_features(df)
-        if features_df.empty:
-            logger.info("pipeline.run_once.no_features")
+            # ANALYZE
+            features_df = extract_features(df)
+            if features_df.empty:
+                logger.info("pipeline.run_once.no_features")
+                metrics.incr_pipeline_runs()
+                return {"status": "no_features", "logs": len(df)}
+
+            # DETECT
+            batch_min_log_time = _earliest_log_time(df)
+            scored = predict(features_df, ingested_at=ingested_at, batch_min_log_time=batch_min_log_time)
+            anomalies = anomalies_only(scored)
+
+            anomaly_count = len(anomalies)
+            metrics.incr_anomalies(anomaly_count)
+
+            # RESPOND
+            alerts_sent = 0
+            for _, row in anomalies.iterrows():
+                anomaly_dict = row.to_dict()
+                evidence = _evidence_for_ip(df, str(anomaly_dict.get("source_ip", "")))
+
+                # Stamp alert_id and dedup_key so they persist to the DB
+                anomaly_dict["alert_id"] = build_alert_id(
+                    str(anomaly_dict.get("source_ip", "")),
+                    str(anomaly_dict.get("threat_level", "")),
+                    anomaly_dict.get("detected_at"),
+                )
+                dedup_tuple = deduper.key_for(anomaly_dict)
+                anomaly_dict["dedup_key"] = f"{dedup_tuple[0]}:{dedup_tuple[1]}"
+
+                # Generate incident report for high-severity
+                report_path: str | None = None
+                if str(anomaly_dict.get("threat_level", "")).lower() == "high":
+                    report_md = build_incident_report(anomaly_dict, evidence, metrics.snapshot())
+                    incident_id = f"INC-{utcnow().strftime('%Y%m%dT%H%M%S')}-{str(anomaly_dict.get('source_ip', 'unknown')).replace('.', '-')}"
+                    path = write_report(report_md, incident_id)
+                    report_path = str(path)
+                    anomaly_dict["incident_report_path"] = report_path
+
+                sent = await send_alert(anomaly_dict, evidence)
+                anomaly_dict["webhook_sent"] = sent
+                if sent:
+                    alerts_sent += 1
+
+                await anomaly_repository.insert_anomaly(anomaly_dict)
+
             metrics.incr_pipeline_runs()
-            return {"status": "no_features", "logs": len(df)}
+            self._cycle_count += 1
 
-        # DETECT
-        batch_min_log_time = _earliest_log_time(df)
-        scored = predict(features_df, ingested_at=ingested_at, batch_min_log_time=batch_min_log_time)
-        anomalies = anomalies_only(scored)
+            # Accumulate logs for periodic retraining
+            self._log_buffer.append(df)
 
-        anomaly_count = len(anomalies)
-        metrics.incr_anomalies(anomaly_count)
+            # Trim buffer so it never exceeds RETRAIN_LOG_BUFFER_MAX_ROWS
+            total_buffered = sum(len(d) for d in self._log_buffer)
+            while total_buffered > RETRAIN_LOG_BUFFER_MAX_ROWS and len(self._log_buffer) > 1:
+                removed = self._log_buffer.pop(0)
+                total_buffered -= len(removed)
 
-        # RESPOND
-        alerts_sent = 0
-        for _, row in anomalies.iterrows():
-            anomaly_dict = row.to_dict()
-            evidence = _evidence_for_ip(df, str(anomaly_dict.get("source_ip", "")))
+            # Trigger background retrain every N cycles
+            retrain_every = settings.retrain_every_n_cycles
+            if self._cycle_count % retrain_every == 0 and not self._retraining:
+                self._retrain_task = asyncio.create_task(self._retrain())
 
-            # Stamp alert_id and dedup_key so they persist to the DB
-            anomaly_dict["alert_id"] = build_alert_id(
-                str(anomaly_dict.get("source_ip", "")),
-                str(anomaly_dict.get("threat_level", "")),
-                anomaly_dict.get("detected_at"),
-            )
-            dedup_tuple = deduper.key_for(anomaly_dict)
-            anomaly_dict["dedup_key"] = f"{dedup_tuple[0]}:{dedup_tuple[1]}"
+            summary = {
+                "status": "ok",
+                "logs": len(df),
+                "features": len(features_df),
+                "anomalies": anomaly_count,
+                "alerts_sent": alerts_sent,
+                "pipeline_mttd_ms": int(scored["pipeline_mttd_ms"].mean()) if not scored.empty else 0,
+            }
+            logger.info("pipeline.run_once.done", extra=summary)
+            return summary
 
-            # Generate incident report for high-severity
-            report_path: str | None = None
-            if str(anomaly_dict.get("threat_level", "")).lower() == "high":
-                report_md = build_incident_report(anomaly_dict, evidence, metrics.snapshot())
-                incident_id = f"INC-{utcnow().strftime('%Y%m%dT%H%M%S')}-{str(anomaly_dict.get('source_ip', 'unknown')).replace('.', '-')}"
-                path = write_report(report_md, incident_id)
-                report_path = str(path)
-                anomaly_dict["incident_report_path"] = report_path
-
-            sent = await send_alert(anomaly_dict, evidence)
-            anomaly_dict["webhook_sent"] = sent
-            if sent:
-                alerts_sent += 1
-
-            await anomaly_repository.insert_anomaly(anomaly_dict)
-
-        metrics.incr_pipeline_runs()
-        self._cycle_count += 1
-
-        # Accumulate logs for periodic retraining
-        self._log_buffer.append(df)
-
-        # Trim buffer so it never exceeds RETRAIN_LOG_BUFFER_MAX_ROWS
-        total_buffered = sum(len(d) for d in self._log_buffer)
-        while total_buffered > RETRAIN_LOG_BUFFER_MAX_ROWS and len(self._log_buffer) > 1:
-            removed = self._log_buffer.pop(0)
-            total_buffered -= len(removed)
-
-        # Trigger background retrain every N cycles
-        retrain_every = settings.retrain_every_n_cycles
-        if self._cycle_count % retrain_every == 0 and not self._retraining:
-            self._retrain_task = asyncio.create_task(self._retrain())
-
-        summary = {
-            "status": "ok",
-            "logs": len(df),
-            "features": len(features_df),
-            "anomalies": anomaly_count,
-            "alerts_sent": alerts_sent,
-            "pipeline_mttd_ms": int(scored["pipeline_mttd_ms"].mean()) if not scored.empty else 0,
-        }
-        logger.info("pipeline.run_once.done", extra=summary)
-        return summary
+        except Exception:
+            reset_window_start()
+            raise
 
     async def _retrain(self) -> None:
         """
