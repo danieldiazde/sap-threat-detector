@@ -5,6 +5,7 @@ Unit tests for the SAP log fetcher.
 """
 
 from __future__ import annotations
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -33,13 +34,17 @@ class TestMockFetcher:
 class TestFetchLogs:
     @pytest.mark.asyncio
     async def test_mock_mode_returns_data(self):
-        df = await fetch_logs()
+        with patch("src.ingestion.sap_log_fetcher.settings") as mock_settings:
+            mock_settings.mock_api = True
+            df = await fetch_logs()
         assert isinstance(df, pd.DataFrame)
         assert "ingested_at" in df.columns
 
     @pytest.mark.asyncio
     async def test_ingested_at_is_datetime(self):
-        df = await fetch_logs()
+        with patch("src.ingestion.sap_log_fetcher.settings") as mock_settings:
+            mock_settings.mock_api = True
+            df = await fetch_logs()
         if not df.empty:
             val = df["ingested_at"].iloc[0]
             from datetime import datetime
