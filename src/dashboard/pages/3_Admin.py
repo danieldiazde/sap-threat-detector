@@ -31,6 +31,10 @@ from src.dashboard._api import (
     fetch_metrics,
     fetch_readiness,
     format_number,
+    inject_sidebar_css,
+    sb_row,
+    sb_section,
+    sidebar_brand,
 )
 
 st.set_page_config(
@@ -38,6 +42,8 @@ st.set_page_config(
     page_icon="⚙️",
     layout="wide",
 )
+
+inject_sidebar_css()
 
 dashboard_autorefresh(key="admin_autorefresh")
 
@@ -277,17 +283,23 @@ st.info(
 # ─── Sidebar ─────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.header("Where things live")
+    sidebar_brand("ADMIN")
+
+    st.markdown(sb_section("Reference"), unsafe_allow_html=True)
     st.markdown(
-        "- Settings · `src/common/config.py`\n"
-        "- Training · `scripts/train_model.py`\n"
-        "- Schema · `src/storage/schema.sql`\n"
-        "- Branch rules · `CONTRIBUTING.md`\n"
-        "- Journal · `docs/MODEL_JOURNAL.md`\n"
-        "- ADRs · `docs/adr/`"
+        sb_row("Settings", "src/common/config.py")
+        + sb_row("Training", "scripts/train_model.py")
+        + sb_row("Schema", "src/storage/schema.sql")
+        + sb_row("Branch rules", "CONTRIBUTING.md")
+        + sb_row("Journal", "docs/MODEL_JOURNAL.md")
+        + sb_row("ADRs", "docs/adr/"),
+        unsafe_allow_html=True,
     )
-    st.caption(
-        f"Env: `{settings.environment}` · "
-        f"Mock API: `{settings.mock_api}` · "
-        f"Mock HANA: `{settings.mock_hana}`"
+
+    st.markdown(sb_section("Environment"), unsafe_allow_html=True)
+    st.markdown(
+        sb_row("Env", str(settings.environment))
+        + sb_row("Mock API", str(settings.mock_api))
+        + sb_row("Mock HANA", str(settings.mock_hana)),
+        unsafe_allow_html=True,
     )

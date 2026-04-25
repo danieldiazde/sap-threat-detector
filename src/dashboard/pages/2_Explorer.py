@@ -22,7 +22,10 @@ from src.common.time_utils import utcnow
 from src.dashboard._api import (
     dashboard_autorefresh,
     fetch_anomalies,
+    inject_sidebar_css,
     load_fallback_logs,
+    sb_section,
+    sidebar_brand,
 )
 from src.model.features import extract_features
 
@@ -31,6 +34,8 @@ st.set_page_config(
     page_icon="\U0001f50d",
     layout="wide",
 )
+
+inject_sidebar_css()
 
 dashboard_autorefresh(key="explorer_autorefresh")
 
@@ -290,12 +295,21 @@ else:
 # ─── Sidebar ─────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.header("Explorer tips")
+    sidebar_brand("ANOMALY EXPLORER")
+
+    st.markdown(sb_section("Usage tips"), unsafe_allow_html=True)
     st.markdown(
-        "- Start wide (all threat levels, all time), then narrow.\n"
-        "- The score slider snaps to ±0.01; IsolationForest "
-        "`decision_function` scores are in roughly `[-0.5, 0.5]`.\n"
-        "- The drill-down recomputes features from local sample data, "
-        "so NULLs from pre-expansion rows may look different than what "
-        "the live API sees. See `MODEL_JOURNAL.md` → *Open questions*."
+        "Start wide — all threat levels, all time — then use the filters "
+        "to narrow down to the signal you care about."
+    )
+    st.markdown(sb_section("Score range"), unsafe_allow_html=True)
+    st.markdown(
+        "IsolationForest `decision_function` scores run roughly `[-0.5, 0.5]`. "
+        "The slider snaps to ±0.01."
+    )
+    st.markdown(sb_section("Drill-down note"), unsafe_allow_html=True)
+    st.markdown(
+        "The per-IP feature vector is recomputed from **local sample data**, "
+        "not the live API. Pre-expansion rows may show NULLs. "
+        "See `MODEL_JOURNAL.md` → *Open questions* for context."
     )

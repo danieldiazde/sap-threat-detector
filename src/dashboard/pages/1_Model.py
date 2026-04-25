@@ -16,7 +16,13 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from src.dashboard._api import dashboard_autorefresh, format_number
+from src.dashboard._api import (
+    dashboard_autorefresh,
+    format_number,
+    inject_sidebar_css,
+    sb_section,
+    sidebar_brand,
+)
 from src.model.versioning import ModelNotFoundError, registry
 
 st.set_page_config(
@@ -24,6 +30,8 @@ st.set_page_config(
     page_icon="\U0001f9e0",
     layout="wide",
 )
+
+inject_sidebar_css()
 
 dashboard_autorefresh(key="model_autorefresh")
 
@@ -197,18 +205,28 @@ else:
 # ─── Sidebar pointers ────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.header("Training journal")
+    sidebar_brand("MODEL REGISTRY")
+
+    st.markdown(sb_section("Training journal"), unsafe_allow_html=True)
     st.markdown(
         "Every experiment should land in `docs/MODEL_JOURNAL.md`. "
         "Before opening a hyperparameter sweep or swapping algorithms, "
         "add a row describing the hypothesis and *why*."
     )
+
+    st.markdown(sb_section("Quick commands"), unsafe_allow_html=True)
+    st.code("make train", language="bash")
+
+    st.markdown(sb_section("Sweep idea queue"), unsafe_allow_html=True)
+    st.markdown(
+        "Open questions live in the *Open questions* section of `MODEL_JOURNAL.md`. "
+        "Add a row before starting any sweep."
+    )
+
     st.divider()
     st.markdown(
-        "**Retrain locally:**\n"
-        "```\nmake train\n```"
-    )
-    st.markdown(
-        "**Sweep idea queue** is in the *Open questions* section of "
-        "`MODEL_JOURNAL.md`."
+        '<p style="font-size:11px;color:#334d6e">Activating a version is a '
+        'production decision — use <code>registry.activate()</code> in a '
+        "deliberate script, not from the dashboard.</p>",
+        unsafe_allow_html=True,
     )
