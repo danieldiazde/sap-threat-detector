@@ -92,4 +92,4 @@ class TestExtractFeaturesTextStatus:
         row = result.iloc[0]
         assert row["error_rate"] > 0
         assert row["denied_ratio"] > 0
-        assert row["status_4xx_count"] > 0
+        assert row["status_4xx_ratio"] > 0
