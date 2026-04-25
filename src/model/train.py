@@ -29,7 +29,7 @@ from src.common.logging import get_logger
 from src.common.time_utils import utcnow
 from src.model.dbscan_detector import DBSCANDetector
 from src.model.evaluate import evaluate
-from src.model.features import extract_features, feature_matrix
+from src.model.features import extract_features_windowed, feature_matrix
 from src.model.schema import FEATURE_COLUMNS, FEATURE_COLUMNS_LEGACY
 from src.model.versioning import registry
 
@@ -76,7 +76,9 @@ def train_split(raw_df: pd.DataFrame, *, model_type: str | None = None) -> dict[
     Use this as the training entry point instead of calling
     :func:`extract_features` + :func:`train` manually.
     """
-    features_df = extract_features(raw_df)
+    features_df = extract_features_windowed(
+        raw_df, window_minutes=settings.training_window_minutes
+    )
     if features_df.empty:
         raise ValueError("Cannot train on empty feature DataFrame")
 
