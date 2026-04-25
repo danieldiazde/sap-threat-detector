@@ -39,7 +39,7 @@ class TestIsolationForestDetection:
         spike = pd.DataFrame([{col: 0.0 for col in FEATURE_COLUMNS}])
         spike["total_requests"] = 5000
         spike["error_rate"] = 0.9
-        spike["status_4xx_count"] = 4500
+        spike["status_4xx_ratio"] = 0.9
         spike["request_rate_zscore"] = 8.0
         X_scaled = scaler.transform(spike[list(FEATURE_COLUMNS)].values)
         score = model.decision_function(X_scaled)[0]

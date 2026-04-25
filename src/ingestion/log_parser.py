@@ -118,7 +118,14 @@ def parse_raw_response(payload: Any) -> pd.DataFrame:
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Rename columns to the canonical schema using :data:`_COLUMN_ALIASES`.
+    Rename columns to the canonical schema using :data:`_COLUMN_ALIASES`,
+    then normalize values to remove known noise sources.
+
+    Value normalization:
+    - ``status``: strip a trailing ``.0`` so float-coerced numeric codes
+      (``"200.0"``) collapse onto their integer form (``"200"``).
+    - ``log_type``: uppercase, so ``"access"``/``"AUDIT"``/``"security"``
+      collapse onto a single canonical bucket.
 
     Matching is case-insensitive. Columns already in canonical form pass
     through unchanged. Extra columns are preserved (we only rename, never
@@ -139,6 +146,14 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     if rename_map:
         df = df.rename(columns=rename_map)
         logger.debug("normalize_columns: renamed", extra={"rename_map": rename_map})
+
+    if "status" in df.columns:
+        s = df["status"].astype(str).str.strip()
+        # "200.0" → "200" but leave non-numeric tokens alone ("DENIED", "")
+        df["status"] = s.str.replace(r"^(\d+)\.0+$", r"\1", regex=True)
+
+    if "log_type" in df.columns:
+        df["log_type"] = df["log_type"].astype(str).str.strip().str.upper()
 
     return df
 
