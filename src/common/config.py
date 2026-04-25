@@ -37,6 +37,7 @@ DEFAULT_MODEL_N_ESTIMATORS: Final[int] = 200
 DEFAULT_MODEL_MAX_SAMPLES: Final[str] = "auto"
 DEFAULT_MODEL_RANDOM_STATE: Final[int] = 42
 DEFAULT_MODEL_CONTEXT_WINDOW_MINUTES: Final[int] = 60
+DEFAULT_TRAINING_WINDOW_MINUTES: Final[int] = 5
 DEFAULT_ANOMALY_SCORE_THRESHOLD: Final[float] = -0.1
 DEFAULT_ALERT_HIGH_THRESHOLD: Final[float] = -0.3
 DEFAULT_ALERT_MEDIUM_THRESHOLD: Final[float] = -0.1
@@ -106,6 +107,7 @@ class Settings:
     model_max_samples: str
     model_random_state: int
     model_context_window_minutes: int
+    training_window_minutes: int
     anomaly_score_threshold: float
     alert_high_threshold: float
     alert_medium_threshold: float
@@ -176,6 +178,9 @@ class Settings:
             model_random_state=_env_int("MODEL_RANDOM_STATE", DEFAULT_MODEL_RANDOM_STATE),
             model_context_window_minutes=_env_int(
                 "MODEL_CONTEXT_WINDOW_MINUTES", DEFAULT_MODEL_CONTEXT_WINDOW_MINUTES
+            ),
+            training_window_minutes=_env_int(
+                "TRAINING_WINDOW_MINUTES", DEFAULT_TRAINING_WINDOW_MINUTES
             ),
             anomaly_score_threshold=_env_float(
                 "ANOMALY_SCORE_THRESHOLD", DEFAULT_ANOMALY_SCORE_THRESHOLD

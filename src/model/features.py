@@ -103,6 +103,75 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     return features
 
 
+def extract_features_windowed(
+    df: pd.DataFrame,
+    *,
+    window_minutes: int,
+) -> pd.DataFrame:
+    """
+    Per-(window, IP) feature extraction.
+
+    Partitions *df* into fixed *window_minutes*-wide time buckets and aggregates
+    one feature row per (window_start, source_ip). Use this for training so
+    aggregates resemble what inference sees per batch — :func:`extract_features`
+    on a poll-interval-wide batch produces the same shape, just for one window.
+
+    The ``request_rate_zscore`` feature is computed *within* each window (peers
+    are the other IPs active in the same bucket), matching inference semantics.
+    """
+    if df.empty:
+        return _empty_feature_frame()
+    if window_minutes <= 0:
+        raise ValueError(f"window_minutes must be positive, got {window_minutes}")
+
+    df = validate_schema(df)
+
+    if "log_type" in df.columns:
+        df = df[~df["log_type"].str.upper().isin(LLM_LOG_TYPES)].copy()
+
+    df = df[df["source_ip"].astype(str).str.strip().ne("")]
+    df = df.dropna(subset=["source_ip"])
+    if df.empty:
+        return _empty_feature_frame()
+
+    df = _enrich_raw(df)
+    # Drop rows whose datetime failed to parse — they have no window.
+    df = df.dropna(subset=["datetime"])
+    if df.empty:
+        return _empty_feature_frame()
+
+    window_ns = int(window_minutes) * 60 * 1_000_000_000
+    floored = (df["datetime"].astype("int64") // window_ns) * window_ns
+    df["_window_start"] = pd.to_datetime(floored, utc=True)
+
+    grouped = df.groupby(["_window_start", "source_ip"], sort=False)
+    features = grouped.apply(_ip_features, include_groups=False).reset_index()
+
+    # Per-window z-score: peers are the other IPs in the same window.
+    def _zscore(s: pd.Series) -> pd.Series:
+        std = float(s.std(ddof=0))
+        if std == 0:
+            return pd.Series(0.0, index=s.index)
+        return (s - s.mean()) / std
+
+    if not features.empty:
+        features["request_rate_zscore"] = (
+            features.groupby("_window_start")["total_requests"].transform(_zscore)
+        )
+    features = _ensure_all_columns(features)
+
+    logger.info(
+        "features.extract_windowed",
+        extra={
+            "input_rows": len(df),
+            "windows": int(features["_window_start"].nunique()) if "_window_start" in features.columns else 0,
+            "samples": len(features),
+            "window_minutes": window_minutes,
+        },
+    )
+    return features
+
+
 # ─── Enrichment (vectorized, runs once on the full frame) ──────────────────
 
 
