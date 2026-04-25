@@ -34,7 +34,12 @@ from src.dashboard._api import (
     fetch_metrics,
     fetch_readiness,
     format_number,
+    inject_sidebar_css,
     load_fallback_logs,
+    sb_row,
+    sb_section,
+    sb_status,
+    sidebar_brand,
 )
 
 # ─── Page config (must be first Streamlit call) ──────────────────────────
@@ -44,6 +49,8 @@ st.set_page_config(
     page_icon="\U0001f6e1️",
     layout="wide",
 )
+
+inject_sidebar_css()
 
 dashboard_autorefresh(key="operations_autorefresh")
 
@@ -264,37 +271,61 @@ else:
 # ─── Sidebar ─────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.header("System health")
+    sidebar_brand("OPERATIONS")
+
+    # ── Live service status ──────────────────────────────────────────────
+    st.markdown(sb_section("Live status"), unsafe_allow_html=True)
 
     if api_available:
-        checks = readiness_data.get("checks", [])
-        for check in checks:
-            name = check.get("name", "unknown")
-            ok = bool(check.get("ok", False))
-            detail = check.get("detail", "")
-            icon = "✅" if ok else "❌"
-            st.markdown(f"{icon} **{name.upper()}** — {detail}")
+        mock_api = health_data.get("mock_api", True)
+        mock_hana = health_data.get("mock_hana", True)
+        mock_webhook = health_data.get("mock_webhook", True)
+        checks = {c["name"]: c for c in readiness_data.get("checks", [])}
 
-        st.divider()
-        st.markdown(
-            f"**SAP API**: {'Live' if not health_data.get('mock_api', True) else 'Mock'}"
-        )
-        st.markdown(
-            f"**Webhook**: {'Live' if not health_data.get('mock_webhook', True) else 'Mock'}"
-        )
-        st.markdown(
-            f"**HANA**: {'Live' if not health_data.get('mock_hana', True) else 'Mock'}"
-        )
+        api_ok = checks.get("api", {}).get("ok")
+        hana_ok = checks.get("hana", {}).get("ok")
+        model_ok = checks.get("model", {}).get("ok")
+
+        st.markdown(sb_status("API", api_ok, "mock" if mock_api else ""), unsafe_allow_html=True)
+        st.markdown(sb_status("HANA DB", hana_ok, "mock" if mock_hana else ""), unsafe_allow_html=True)
+        st.markdown(sb_status("Webhook", True, "mock" if mock_webhook else ""), unsafe_allow_html=True)
+        st.markdown(sb_status("Model", model_ok), unsafe_allow_html=True)
     else:
-        st.markdown("❌ **API** — not reachable")
-        st.markdown("❓ **HANA** — unknown")
-        st.markdown("❓ **Webhook** — unknown")
-        st.markdown("❓ **Model** — unknown")
+        st.markdown(sb_status("API", False, "unreachable"), unsafe_allow_html=True)
+        st.markdown(sb_status("HANA DB", None), unsafe_allow_html=True)
+        st.markdown(sb_status("Webhook", None), unsafe_allow_html=True)
+        st.markdown(sb_status("Model", None), unsafe_allow_html=True)
+
+    # ── Pipeline counters ────────────────────────────────────────────────
+    st.markdown(sb_section("Pipeline"), unsafe_allow_html=True)
+
+    last_run = metrics_data.get("last_run_at") or "never"
+    errors_total = counters.get("errors_total", 0)
+    err_colour = "#ef4444" if errors_total else "#22c55e"
+    err_html = (
+        f'<span style="color:{err_colour};font-weight:600">{errors_total:,}</span>'
+    )
+
+    st.markdown(
+        sb_row("Last run", str(last_run)[:19])
+        + sb_row("Runs total", f"{counters.get('pipeline_runs_total', 0):,}")
+        + sb_row("Logs processed", f"{counters.get('logs_processed_total', 0):,}"),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;'
+        'padding:3px 0">'
+        '<span style="font-size:12px;color:#475569">Errors</span>'
+        f"{err_html}"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    if metrics_data.get("last_error"):
+        st.markdown(
+            f'<p style="font-size:11px;color:#ef4444;margin-top:4px;word-break:break-all">'
+            f'{metrics_data["last_error"][:80]}</p>',
+            unsafe_allow_html=True,
+        )
 
     st.divider()
-    st.markdown(f"**Last pipeline run** · {metrics_data.get('last_run_at') or 'never'}")
-    if metrics_data.get("last_error"):
-        st.markdown(f"**Last error** · {metrics_data['last_error']}")
-    st.markdown(f"**Pipeline runs** · {counters.get('pipeline_runs_total', 0):,}")
-    st.markdown(f"**Errors** · {counters.get('errors_total', 0):,}")
-    st.caption(f"Refresh · every {settings.dashboard_refresh_seconds}s")
+    st.caption(f"Auto-refresh every {settings.dashboard_refresh_seconds} s")
