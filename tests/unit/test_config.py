@@ -24,8 +24,9 @@ class TestSettings:
             s = Settings.from_env()
         assert s.mock_api is False
 
-    def test_mock_webhook_false_when_url_set(self):
-        with patch.dict(os.environ, {"SAP_WEBHOOK_URL": "https://hook.example.com"}, clear=True):
+    def test_mock_webhook_false_when_api_url_set(self):
+        # /alert lives on the SAP API itself, so mock_webhook tracks SAP_API_URL.
+        with patch.dict(os.environ, {"SAP_API_URL": "https://api.example.com"}, clear=True):
             s = Settings.from_env()
         assert s.mock_webhook is False
 

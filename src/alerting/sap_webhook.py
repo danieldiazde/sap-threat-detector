@@ -1,17 +1,24 @@
 """
 sap_webhook.py
 --------------
-RESPOND phase — fire alerts to the SAP alerting webhook.
+RESPOND phase — fire alerts to the SAP SOC ``POST /alert`` endpoint.
 
-Design:
-- HMAC-SHA256 signature on every outbound payload (when the secret is set)
-- Idempotency key (``alert_id``) prevents duplicate server-side processing
-- Short-circuit via :class:`AlertDeduper` to avoid alert storms
-- Exponential-backoff retry with max 3 attempts on 5xx / network errors
-- Shared ``httpx.AsyncClient`` for connection reuse
+Spec contract (see memory/project_sap_api_spec.md):
+- ``POST {SAP_API_URL}/alert`` with header ``Authorization: Bearer <SAP_API_KEY>``
+- Body is exactly ``{"message": "<= 300 char string"}``. The team is identified
+  from the Bearer token; no other fields are accepted.
+- The message must answer WHAT happened, WHEN it occurred, WHY it triggered.
+- Success returns 201 with ``{status, team_name, message, timestamp_utc}``.
 
-Until April 27, ``SAP_WEBHOOK_URL`` is empty so ``_mock_alert`` logs the
-payload to stdout instead of firing. No code change is needed to switch.
+Local design:
+- Client-side TTL dedup via :class:`AlertDeduper` to avoid alert storms.
+- Exponential-backoff retry with max 3 attempts on 5xx / network errors.
+- Shared ``httpx.AsyncClient`` for connection reuse.
+- ``build_alert_id`` is still produced for our internal ``ANOMALIES.ALERT_ID``
+  identity; it does not travel on the wire.
+
+When ``SAP_API_URL`` is empty the fetcher / alerter run in mock mode and the
+payload is logged locally instead of sent.
 
 Owner: Cloud Integration Engineer
 """
@@ -20,8 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import hmac
-import json
 import random
 from typing import Any
 
@@ -41,7 +46,9 @@ HTTP_TIMEOUT_SECONDS: float = 10.0
 RETRY_MAX_ATTEMPTS: int = 3
 RETRY_BASE_DELAY: float = 0.5
 RETRY_MAX_DELAY: float = 5.0
-EVIDENCE_SAMPLE_SIZE: int = 5
+
+# Spec: message max length is 300 characters.
+MESSAGE_MAX_CHARS: int = 300
 
 
 # ─── Shared client ─────────────────────────────────────────────────────────
@@ -83,14 +90,15 @@ async def send_alert(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> 
         )
         return True
 
-    payload = _build_payload(anomaly_row, evidence_df)
+    message = format_alert_message(anomaly_row, evidence_df)
+    payload = {"message": message}
 
     if settings.mock_webhook:
-        _mock_alert(payload)
+        _mock_alert(anomaly_row, message)
         metrics.incr_alerts_sent()
         return True
 
-    success = await _send_with_retry(payload)
+    success = await _send_with_retry(payload, anomaly_row)
     if success:
         metrics.incr_alerts_sent()
     else:
@@ -98,46 +106,129 @@ async def send_alert(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> 
     return success
 
 
-# ─── Payload construction ──────────────────────────────────────────────────
+# ─── Message construction ──────────────────────────────────────────────────
 
 
-def _build_payload(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> dict[str, Any]:
+def format_alert_message(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> str:
+    """
+    Build the WHAT / WHEN / WHY string the spec requires (≤300 chars).
+
+    The "why" section is selected from the strongest evidence signal so judges
+    see the most relevant indicator first. Long fields are trimmed before the
+    final truncation so we lose detail (not structure) when we hit the cap.
+    """
+    what = _what_clause(anomaly_row)
+    when = _when_clause(anomaly_row)
+    why = _why_clause(anomaly_row, evidence_df)
+
+    msg = f"WHAT: {what} WHEN: {when} WHY: {why}"
+    if len(msg) > MESSAGE_MAX_CHARS:
+        # Hard cap — keep the WHAT/WHEN intact, truncate the WHY tail.
+        head = f"WHAT: {what} WHEN: {when} WHY: "
+        budget = MESSAGE_MAX_CHARS - len(head)
+        msg = (
+            msg[:MESSAGE_MAX_CHARS]
+            if budget < 1
+            else head + why[: max(budget - 1, 0)] + "."
+        )
+    return msg
+
+
+def _what_clause(anomaly_row: dict[str, Any]) -> str:
+    """Pick the most specific threat label available, fall back to a generic."""
+    sql_hits = int(anomaly_row.get("sql_injection_hits", 0) or 0)
+    brute_score = float(anomaly_row.get("brute_force_score", 0) or 0)
+    suspicious = float(anomaly_row.get("suspicious_path_ratio", 0) or 0)
+    threat_level = str(anomaly_row.get("threat_level", "anomaly")).lower()
+    target = _target_label(anomaly_row)
+
+    if sql_hits > 0:
+        kind = "SQL injection attempt"
+    elif brute_score >= 0.2:
+        kind = "Brute-force login attempt"
+    elif suspicious >= 0.3:
+        kind = "Suspicious path scanning"
+    else:
+        kind = f"{threat_level.title()} anomaly"
+
+    return f"{kind} on {target}."
+
+
+def _when_clause(anomaly_row: dict[str, Any]) -> str:
     detected_at = anomaly_row.get("detected_at") or utcnow()
-    source_ip = str(anomaly_row.get("source_ip", "unknown"))
-    threat_level = str(anomaly_row.get("threat_level", "high"))
-    alert_id = build_alert_id(source_ip, threat_level, detected_at)
+    if hasattr(detected_at, "isoformat"):
+        return f"{iso(detected_at)}."
+    return f"{detected_at!s}."
 
-    return {
-        "alert_id": alert_id,
-        "team_id": settings.sap_team_id,
-        "detected_at": iso(detected_at) if hasattr(detected_at, "isoformat") else str(detected_at),
-        "source_ip": source_ip,
-        "threat_level": threat_level,
-        "anomaly_score": float(anomaly_row.get("anomaly_score", 0) or 0),
-        "pipeline_mttd_ms": int(anomaly_row.get("pipeline_mttd_ms", 0) or 0),
-        "e2e_mttd_ms": _int_or_none(anomaly_row.get("e2e_mttd_ms")),
-        "model_version": str(anomaly_row.get("model_version", "unknown")),
-        "model_type": str(anomaly_row.get("model_type", "isolation_forest")),
-        "evidence": {
-            "total_requests": int(anomaly_row.get("total_requests", 0) or 0),
-            "error_rate": float(anomaly_row.get("error_rate", 0) or 0),
-            "denied_ratio": float(anomaly_row.get("denied_ratio", 0) or 0),
-            "post_ratio": float(anomaly_row.get("post_ratio", 0) or 0),
-            "suspicious_path_ratio": float(anomaly_row.get("suspicious_path_ratio", 0) or 0),
-            "sql_injection_hits": int(anomaly_row.get("sql_injection_hits", 0) or 0),
-            "brute_force_score": float(anomaly_row.get("brute_force_score", 0) or 0),
-            "multi_bucket_count": int(anomaly_row.get("multi_bucket_count", 0) or 0),
-            "log_sample": _evidence_sample(evidence_df),
-        },
-    }
+
+def _why_clause(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> str:
+    total = int(anomaly_row.get("total_requests", 0) or 0)
+    error_rate = float(anomaly_row.get("error_rate", 0) or 0)
+    denied = float(anomaly_row.get("denied_ratio", 0) or 0)
+    sql_hits = int(anomaly_row.get("sql_injection_hits", 0) or 0)
+    brute_score = float(anomaly_row.get("brute_force_score", 0) or 0)
+    score = float(anomaly_row.get("anomaly_score", 0) or 0)
+    source_ip = str(anomaly_row.get("source_ip", "unknown"))
+
+    parts: list[str] = []
+    if sql_hits > 0:
+        parts.append(f"{sql_hits} SQLi hits")
+    if brute_score >= 0.2:
+        parts.append(f"brute_score={brute_score:.2f}")
+    if error_rate >= 0.3:
+        parts.append(f"err_rate={error_rate:.0%}")
+    if denied >= 0.3:
+        parts.append(f"denied={denied:.0%}")
+    if total:
+        parts.append(f"{total} reqs")
+    parts.append(f"score={score:.2f}")
+
+    window = _evidence_window(evidence_df)
+    head = ", ".join(parts)
+    if window:
+        return f"{head} from IP {source_ip} {window}."
+    return f"{head} from IP {source_ip}."
+
+
+_TARGET_LABEL_MAX = 80
+
+
+def _target_label(anomaly_row: dict[str, Any]) -> str:
+    """Prefer SAP application name (richer signal); fall back to source IP.
+
+    Capped so a malformed ``sap_application`` cannot blow past the 300-char
+    message budget on its own.
+    """
+    app = anomaly_row.get("sap_application")
+    label = str(app) if app else f"IP {anomaly_row.get('source_ip', 'unknown')}"
+    if len(label) > _TARGET_LABEL_MAX:
+        label = label[: _TARGET_LABEL_MAX - 1] + "…"
+    return label
+
+
+def _evidence_window(evidence_df: pd.DataFrame) -> str:
+    """Return a short ``within Xs`` / ``within Xm`` span from the evidence rows."""
+    if evidence_df is None or evidence_df.empty or "datetime" not in evidence_df.columns:
+        return ""
+    times = pd.to_datetime(evidence_df["datetime"], errors="coerce", utc=True).dropna()
+    if len(times) < 2:
+        return ""
+    span_s = (times.max() - times.min()).total_seconds()
+    if span_s < 60:
+        return f"within {int(span_s)}s"
+    return f"within {int(span_s // 60)}m"
+
+
+# ─── Internal helpers ──────────────────────────────────────────────────────
 
 
 def build_alert_id(source_ip: str, threat_level: str, detected_at: Any) -> str:
     """
-    Deterministic alert ID for idempotency.
+    Deterministic alert ID for our internal ``ANOMALIES.ALERT_ID`` column.
 
-    Rounded to the minute so retries within the same minute share the
-    same ID and the SAP webhook can deduplicate server-side.
+    Rounded to the minute so retries within the same minute share the same
+    ID. Not transmitted to the SAP /alert endpoint — purely a local identity
+    used for HANA dedup and dashboard linking.
     """
     if hasattr(detected_at, "strftime"):
         minute = detected_at.strftime("%Y%m%dT%H%M")
@@ -147,42 +238,21 @@ def build_alert_id(source_ip: str, threat_level: str, detected_at: Any) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
-def _evidence_sample(df: pd.DataFrame) -> list[dict[str, Any]]:
-    if df is None or df.empty:
-        return []
-    head = df.head(EVIDENCE_SAMPLE_SIZE).copy()
-    for col in head.columns:
-        if pd.api.types.is_datetime64_any_dtype(head[col]):
-            head[col] = head[col].astype(str)
-    return head.to_dict(orient="records")
-
-
-def _int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 # ─── Sending with retry ────────────────────────────────────────────────────
 
 
-async def _send_with_retry(payload: dict[str, Any]) -> bool:
+async def _send_with_retry(
+    payload: dict[str, Any], anomaly_row: dict[str, Any]
+) -> bool:
     last_error: str | None = None
+    log_ctx = {
+        "source_ip": anomaly_row.get("source_ip"),
+        "threat_level": anomaly_row.get("threat_level"),
+    }
     for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
         try:
             await _send_once(payload)
-            logger.info(
-                "webhook.sent",
-                extra={
-                    "alert_id": payload["alert_id"],
-                    "source_ip": payload["source_ip"],
-                    "threat_level": payload["threat_level"],
-                    "attempt": attempt,
-                },
-            )
+            logger.info("webhook.sent", extra={**log_ctx, "attempt": attempt})
             return True
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
@@ -190,18 +260,18 @@ async def _send_with_retry(payload: dict[str, Any]) -> bool:
             if status < 500 and status != 429:
                 logger.error(
                     "webhook.fatal_http",
-                    extra={"status": status, "alert_id": payload["alert_id"]},
+                    extra={**log_ctx, "status": status, "body": exc.response.text[:300]},
                 )
                 return False
             logger.warning(
                 "webhook.retry",
-                extra={"attempt": attempt, "status": status, "alert_id": payload["alert_id"]},
+                extra={**log_ctx, "attempt": attempt, "status": status},
             )
         except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
             last_error = str(exc)
             logger.warning(
                 "webhook.retry",
-                extra={"attempt": attempt, "error": str(exc), "alert_id": payload["alert_id"]},
+                extra={**log_ctx, "attempt": attempt, "error": str(exc)},
             )
 
         if attempt < RETRY_MAX_ATTEMPTS:
@@ -209,45 +279,28 @@ async def _send_with_retry(payload: dict[str, Any]) -> bool:
             delay *= 0.5 + random.random()
             await asyncio.sleep(delay)
 
-    logger.error(
-        "webhook.failed",
-        extra={"alert_id": payload["alert_id"], "error": last_error},
-    )
+    logger.error("webhook.failed", extra={**log_ctx, "error": last_error})
     return False
 
 
 async def _send_once(payload: dict[str, Any]) -> None:
-    body = json.dumps(payload).encode("utf-8")
     headers = {
+        "Authorization": f"Bearer {settings.sap_api_key}",
         "Content-Type": "application/json",
-        "X-SAP-Team-ID": settings.sap_team_id,
-        "X-Alert-ID": payload["alert_id"],
     }
-    if settings.sap_webhook_secret:
-        signature = hmac.new(
-            settings.sap_webhook_secret.encode("utf-8"),
-            body,
-            hashlib.sha256,
-        ).hexdigest()
-        headers["X-SAP-Signature"] = signature
-
+    url = f"{settings.sap_api_url}/alert"
     client = _get_client()
-    response = await client.post(
-        settings.sap_webhook_url,
-        content=body,
-        headers=headers,
-    )
+    response = await client.post(url, json=payload, headers=headers)
     response.raise_for_status()
 
 
-def _mock_alert(payload: dict[str, Any]) -> None:
+def _mock_alert(anomaly_row: dict[str, Any], message: str) -> None:
     logger.info(
         "webhook.mock",
         extra={
-            "alert_id": payload["alert_id"],
-            "source_ip": payload["source_ip"],
-            "threat_level": payload["threat_level"],
-            "anomaly_score": payload["anomaly_score"],
-            "pipeline_mttd_ms": payload["pipeline_mttd_ms"],
+            "source_ip": anomaly_row.get("source_ip"),
+            "threat_level": anomaly_row.get("threat_level"),
+            "message": message,
+            "message_len": len(message),
         },
     )
