@@ -122,7 +122,6 @@ def mock_settings() -> Settings:
     return Settings(
         sap_api_url="",
         sap_api_key="",
-        sap_api_page_size=100,
         sap_team_id="test-team",
         hana_host="",
         hana_port=443,
