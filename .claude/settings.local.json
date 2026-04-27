@@ -78,7 +78,26 @@
       "Bash(.venv/bin/pytest tests/unit/test_ingestion.py::TestFetchLogs::test_ingested_at_is_datetime -q --tb=line)",
       "Bash(.venv/bin/pytest tests/unit/ tests/model/ -q --tb=short)",
       "Bash(.venv/bin/pytest tests/integration/ -q --tb=short)",
-      "Bash(.venv/bin/pytest *)"
+      "Bash(.venv/bin/pytest *)",
+      "Bash(pip3 show *)",
+      "Bash(make test-unit *)",
+      "Bash(make test-model *)",
+      "Bash(make test-integration *)",
+      "Bash(ps *)",
+      "Bash(kill 21930)",
+      "Bash(make test *)",
+      "Read(//home/daniel-diaz-de-leon/**)",
+      "Read(//tmp/**)",
+      "Bash(getent hosts *)",
+      "Bash(nslookup sap-api-bi.679168.xyz)",
+      "Read(//etc/**)",
+      "Bash(grep -v \"^$\")",
+      "Bash(command -v dig host getent)",
+      "Bash(getent ahosts *)",
+      "Bash(cf target *)",
+      "Bash(cf orgs *)",
+      "Bash(mv \"/home/daniel-diaz-de-leon/code/sap-threat-detector/.claude/projects/-home-daniel-diaz-de-leon-code-sap-threat-detector/memory/project_llm_integration_pr.md\" \"/home/daniel-diaz-de-leon/.claude/projects/-home-daniel-diaz-de-leon-code-sap-threat-detector/memory/project_llm_integration_pr.md\")",
+      "Bash(rm -rf \"/home/daniel-diaz-de-leon/code/sap-threat-detector/.claude/projects\")"
     ]
   }
 }

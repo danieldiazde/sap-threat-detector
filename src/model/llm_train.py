@@ -11,7 +11,7 @@ Architecture (per design 2026-04-27):
 The audit on 2026-04-27 found:
   - 11 prompt categories, smallest = 27,804 rows post-expansion (>> IF needs)
   - 320 distinct (model, category) cohorts, smallest >= 500 rows
-  - cost p99 varies up to 650× across models in the same category — single
+  - cost p99 varies up to 650x across models in the same category — single
     global model would compromise on cost thresholds; per-category fixes that
   - global + per-category ensemble disagreement is itself an anomaly signal
 
@@ -39,7 +39,6 @@ from pathlib import Path
 from typing import Any
 
 import joblib
-import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler

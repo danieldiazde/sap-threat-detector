@@ -18,7 +18,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 
 import pandas as pd
@@ -62,7 +61,7 @@ def fetch_training_rows(*, limit: int | None, since: str | None) -> pd.DataFrame
             "Set HANA_* env vars in .env first."
         )
 
-    from hdbcli import dbapi  # noqa: I001  (deferred so mock-mode error fires first)
+    from hdbcli import dbapi
 
     conn = dbapi.connect(
         address=settings.hana_host,

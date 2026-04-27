@@ -5,17 +5,15 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-
 from src.model.llm_features import (
-    ColumnStats,
     CohortProfiles,
+    ColumnStats,
     build_llm_feature_matrix,
     compute_cohort_profiles,
     is_scorable_llm_row,
     llm_feature_matrix,
 )
 from src.model.schema import LLM_FEATURE_COLUMNS
-
 
 # ─── Fixtures ──────────────────────────────────────────────────────────────
 

@@ -19,7 +19,7 @@ Public surface:
 
 The motivation for per-cohort z-scores instead of global thresholds:
 ``Productivity`` p99 cost on ``gpt-5.4-pro`` is $0.13; on ``gpt-4o-mini``
-the same percentile is $0.0002 — a 650× spread. A single global threshold
+the same percentile is $0.0002 — a 650x spread. A single global threshold
 either misses cheap-model anomalies or false-flags expensive-model normals.
 A z-score against the cohort means "3 standard deviations above your peer
 group" carries the same signal in both cases.
@@ -29,8 +29,8 @@ Owner: AI & Data Science Specialist
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Mapping
 
 import numpy as np
 import pandas as pd
@@ -47,7 +47,7 @@ logger = get_logger(__name__)
 
 # Profile is built off five distributions: the four raw numeric columns plus
 # the derived output/input token ratio. Listed once here, used everywhere.
-_PROFILED_COLS: tuple[str, ...] = LLM_NUMERIC_PROFILE_COLS + ("output_input_ratio",)
+_PROFILED_COLS: tuple[str, ...] = (*LLM_NUMERIC_PROFILE_COLS, "output_input_ratio")
 
 
 @dataclass(frozen=True)
@@ -280,7 +280,7 @@ def build_llm_feature_matrix(
     # profile carries one row per known cohort with (mean, std) per profiled
     # column; rows whose cohort is missing get NaN after the merge and are
     # filled from the global profile. A row-by-row Python loop here would
-    # be O(rows × cols) and dominate batch latency on 50k+ row windows.
+    # be O(rows x cols) and dominate batch latency on 50k+ row windows.
     profile_df = _profiles_to_dataframe(profiles)
 
     keyed = pd.DataFrame({
@@ -320,7 +320,7 @@ def build_llm_feature_matrix(
     out["llm_prompt_category"] = categories.values
 
     # Reorder so feature columns come first in the documented order.
-    ordered = list(LLM_FEATURE_COLUMNS) + ["llm_model_id", "llm_prompt_category"]
+    ordered = [*LLM_FEATURE_COLUMNS, "llm_model_id", "llm_prompt_category"]
     return out[[c for c in ordered if c in out.columns]]
 
 
