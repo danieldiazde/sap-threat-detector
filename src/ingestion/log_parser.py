@@ -30,6 +30,8 @@ logger = get_logger(__name__)
 # April 13 once we see the real API response. The normalization function
 # is case-insensitive.
 _COLUMN_ALIASES: dict[str, str] = {
+    # log_id — Elasticsearch/SAP API per-row primary key, used for dedup.
+    "_id": "log_id",
     # datetime
     "@timestamp": "datetime",
     "timestamp": "datetime",

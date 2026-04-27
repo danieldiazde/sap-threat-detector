@@ -29,6 +29,7 @@ REQUIRED_LOG_COLUMNS: Final[tuple[str, ...]] = (
 )
 
 OPTIONAL_LOG_COLUMNS: Final[tuple[str, ...]] = (
+    "log_id",  # API _id; primary dedup key in HANA SECURITY_LOGS
     "port_service",
     "log_type",
     "request_path",
