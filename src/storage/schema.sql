@@ -51,9 +51,19 @@ CREATE TABLE ANOMALIES (
     ID                   BIGINT          GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     DETECTED_AT          TIMESTAMP       NOT NULL,
     INGESTED_AT          TIMESTAMP,
-    SOURCE_IP            NVARCHAR(50)    NOT NULL,
+    -- Discriminator: 'sap' (existing source-IP-keyed detector) | 'llm' (cohort-keyed detector).
+    DETECTOR             NVARCHAR(20)    DEFAULT 'sap',
+    -- Nullable: LLM anomalies are keyed on (LLM_MODEL_ID, LLM_PROMPT_CATEGORY) instead.
+    SOURCE_IP            NVARCHAR(50),
+    LLM_MODEL_ID         NVARCHAR(100),
+    LLM_PROMPT_CATEGORY  NVARCHAR(100),
     THREAT_LEVEL         NVARCHAR(10)    NOT NULL,   -- 'high' | 'medium' | 'low'
     ANOMALY_SCORE        DECIMAL(10, 6),
+    -- Per-detector breakdown for the LLM ensemble (nullable for SAP rows).
+    IF_GLOBAL_SCORE      DECIMAL(10, 6),
+    IF_CATEGORY_SCORE    DECIMAL(10, 6),
+    -- JSON array of rule_ids that fired (e.g. ["LLM_TOKEN_HIGH","LLM_NEAR_TIMEOUT"]).
+    RULE_IDS             NCLOB,
     TOTAL_REQUESTS       INTEGER,
     ERROR_RATE           DECIMAL(5, 4),
     PIPELINE_MTTD_MS     INTEGER,                    -- detected_at - ingested_at
@@ -68,6 +78,7 @@ CREATE TABLE ANOMALIES (
 
 CREATE INDEX IDX_ANOMALIES_DETECTED_AT  ON ANOMALIES (DETECTED_AT);
 CREATE INDEX IDX_ANOMALIES_THREAT_LEVEL ON ANOMALIES (THREAT_LEVEL);
+CREATE INDEX IDX_ANOMALIES_DETECTOR     ON ANOMALIES (DETECTOR);
 CREATE UNIQUE INDEX UX_ANOMALIES_ALERT_ID ON ANOMALIES (ALERT_ID);
 
 

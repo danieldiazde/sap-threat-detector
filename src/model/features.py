@@ -26,6 +26,7 @@ from src.model.schema import (
     DENIED_STATUSES,
     DESTRUCTIVE_METHODS,
     FEATURE_COLUMNS,
+    LLM_LOG_TYPES,
     SQL_INJECTION_KEYWORDS,
     SUSPICIOUS_PATH_FRAGMENTS,
     TEXT_STATUS_TO_CODE,
@@ -40,9 +41,7 @@ STATUS_4XX_LOWER: int = 400
 STATUS_4XX_UPPER: int = 499
 STATUS_5XX_LOWER: int = 500
 
-# LLM log types carry no SOURCE_IP/STATUS/PORT_SERVICE fields — they need a
-# separate feature pipeline (see feat/llm-anomaly-detector).
-LLM_LOG_TYPES: frozenset[str] = frozenset({"LLM_REQUEST", "LLM_ERROR", "LLM_TIMEOUT"})
+# LLM_LOG_TYPES is now defined in src.model.schema (shared with the LLM detector).
 
 
 def extract_features(df: pd.DataFrame) -> pd.DataFrame:
