@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import pandas as pd
-
-from src.model.llm_features import ColumnStats, CohortProfiles
+from src.model.llm_features import CohortProfiles, ColumnStats
 from src.model.llm_rules import (
     CONTENT_FILTER_SPIKE_RATIO,
     ERROR_STORM_RATIO,
-    HIGH_COST_FLOOR_USD,
     HIGH_COST_Z_THRESHOLD,
     SPIKE_MIN_BATCH_SIZE,
     TOKEN_HIGH_FLOOR,
     evaluate_cohort,
     max_severity,
 )
-
 
 # ─── Fixtures ──────────────────────────────────────────────────────────────
 

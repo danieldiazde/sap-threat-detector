@@ -10,7 +10,7 @@ cohorts within a batch, returning :class:`FiredRule` records that carry a
 and for the recommendation engine in the next PR.
 
 Why both rules and ML: rules are explainable to judges ("we flagged it
-because the content_filter rate was 4× baseline"). ML covers multivariate
+because the content_filter rate was 4x baseline"). ML covers multivariate
 patterns rules can't enumerate. Together we get high recall plus demo
 clarity.
 
@@ -20,8 +20,8 @@ Rule catalog (all thresholds derived from data/reports/llm_audit_2026-04-27.md):
     LLM_NEAR_TIMEOUT          row, low       response_time_ms >= 30s (5s buffer to 35s cap)
     LLM_HIGH_COST_OUTLIER     row, high      cost_z > 4 AND cost_usd > 0.10
     LLM_EXFIL_SHAPE           row, high      prompt < cohort_p10 AND total > cohort_p99
-    LLM_CONTENT_FILTER_SPIKE  cohort, high   batch CF-rate > 3× baseline AND batch >= 20
-    LLM_ERROR_STORM           cohort, high   batch error+timeout rate > 10× baseline AND batch >= 20
+    LLM_CONTENT_FILTER_SPIKE  cohort, high   batch CF-rate > 2.5x baseline AND > 30% absolute
+    LLM_ERROR_STORM           cohort, high   batch error+timeout rate > 2x baseline AND > 50% absolute
 
 Owner: AI & Data Science Specialist
 """
@@ -49,14 +49,14 @@ SEVERITY_RANK: dict[Severity, int] = {"low": 1, "medium": 2, "high": 3}
 # above and add a regression test in tests/unit/test_llm_rules.py.
 
 TOKEN_HIGH_FLOOR: int = 1990              # p99.5 of LLM_PROMPT_TOKENS across all rows
-HIGH_COST_Z_THRESHOLD: float = 4.0        # 4σ above cohort mean
+HIGH_COST_Z_THRESHOLD: float = 4.0        # 4sigma above cohort mean
 HIGH_COST_FLOOR_USD: float = 0.10         # absolute floor (suppresses small-cohort z-noise)
 
 # Spike rules use BOTH a ratio (elevated relative to baseline) AND an absolute
 # floor (the rate is high in absolute terms). Ratio-only thresholds are
 # unreachable when baselines are already elevated — the audit shows
 # per-category baseline error rates around 30% in our corpus, which makes
-# any "10× baseline" rule mathematically impossible to trigger.
+# any "10x baseline" rule mathematically impossible to trigger.
 CONTENT_FILTER_SPIKE_RATIO: float = 2.5   # ratio of observed/baseline content_filter rate
 CONTENT_FILTER_SPIKE_FLOOR: float = 0.30  # observed fraction must also exceed this
 ERROR_STORM_RATIO: float = 2.0            # ratio of observed/baseline error+timeout rate
