@@ -31,7 +31,6 @@ load_dotenv()
 
 DEFAULT_POLL_INTERVAL_SECONDS: Final[int] = 30
 DEFAULT_RETRAIN_EVERY_N_CYCLES: Final[int] = 480  # 480 x 30s = 4 hours
-DEFAULT_PAGE_SIZE: Final[int] = 500
 DEFAULT_MODEL_CONTAMINATION: Final[float] = 0.05
 DEFAULT_MODEL_N_ESTIMATORS: Final[int] = 200
 DEFAULT_MODEL_MAX_SAMPLES: Final[str] = "auto"
@@ -82,13 +81,11 @@ class Settings:
     """Immutable, typed snapshot of application configuration."""
 
     # --- SAP API (available April 13) ---
+    # Note: page size is server-controlled (BATCH_SIZE=500). Clients only send `page`.
     sap_api_url: str
     sap_api_key: str
-    sap_api_page_size: int
 
-    # --- Webhook (available April 27) ---
-    sap_webhook_url: str
-    sap_webhook_secret: str
+    # --- Alerting (POST /alert lives on the SAP API itself) ---
     sap_team_id: str
 
     # --- HANA ---
@@ -140,8 +137,12 @@ class Settings:
 
     @property
     def mock_webhook(self) -> bool:
-        """True when no real webhook URL is configured — log alerts locally."""
-        return not self.sap_webhook_url
+        """True when the SAP API is not configured — log alerts locally.
+
+        Alerts now POST to ``{SAP_API_URL}/alert`` with the same Bearer token
+        used for ingestion, so mock-alert mode is tied to the API URL.
+        """
+        return not self.sap_api_url
 
     @property
     def mock_hana(self) -> bool:
@@ -160,9 +161,6 @@ class Settings:
         return cls(
             sap_api_url=_env_str("SAP_API_URL"),
             sap_api_key=_env_str("SAP_API_KEY"),
-            sap_api_page_size=_env_int("SAP_API_PAGE_SIZE", DEFAULT_PAGE_SIZE),
-            sap_webhook_url=_env_str("SAP_WEBHOOK_URL"),
-            sap_webhook_secret=_env_str("SAP_WEBHOOK_SECRET"),
             sap_team_id=_env_str("SAP_TEAM_ID", DEFAULT_TEAM_ID),
             hana_host=_env_str("HANA_HOST"),
             hana_port=_env_int("HANA_PORT", DEFAULT_HANA_PORT),

@@ -116,7 +116,9 @@ class LogRepository:
 
     @staticmethod
     def _row_tuple(r: dict[str, Any]) -> tuple:
+        log_id = r.get("log_id")
         return (
+            (str(log_id) if log_id is not None and str(log_id).strip() else None),
             r.get("datetime"),
             r.get("source_ip"),
             r.get("port_service"),
@@ -144,7 +146,7 @@ class LogRepository:
 
     _INSERT_SQL: str = """
         INSERT INTO SECURITY_LOGS
-        (DATETIME, SOURCE_IP, PORT_SERVICE, EVENT_DESCRIPTION,
+        (LOG_ID, DATETIME, SOURCE_IP, PORT_SERVICE, EVENT_DESCRIPTION,
          STATUS, LOG_TYPE, REQUEST_PATH, SAP_APPLICATION,
          REGION_CODE, MACRO_REGION, HTTP_METHOD,
          SAP_SOURCE_TYPE, SAP_APP_ENV,
@@ -152,8 +154,16 @@ class LogRepository:
          LLM_STATUS, LLM_RESPONSE_TIME_MS, LLM_PROMPT_CATEGORY,
          LLM_ERROR_MESSAGE, LLM_MODEL_ID, LLM_PROMPT_TOKENS,
          INGESTED_AT)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
+
+    # HANA error fragments that indicate a duplicate LOG_ID — silenced (info-level)
+    # since the UNIQUE index is doing its job. Anything else still surfaces as an error.
+    _UNIQUE_VIOLATION_HINTS: tuple[str, ...] = (
+        "unique constraint",
+        "uniqueness violation",
+        "duplicate key",
+    )
 
     def _bulk_insert_sync(self, conn: Any, records: list[dict[str, Any]]) -> None:
         rows = [self._row_tuple(r) for r in records]
@@ -174,10 +184,18 @@ class LogRepository:
                         try:
                             cursor.execute(self._INSERT_SQL, row)
                         except Exception as row_exc:
-                            logger.error(
-                                "log_repo.row_skip",
-                                extra={"source_ip": row[1], "error": str(row_exc)},
-                            )
+                            msg = str(row_exc).lower()
+                            if any(h in msg for h in self._UNIQUE_VIOLATION_HINTS):
+                                # Duplicate LOG_ID — the dedup index is working.
+                                logger.info(
+                                    "log_repo.dedup_skip",
+                                    extra={"log_id": row[0], "source_ip": row[2]},
+                                )
+                            else:
+                                logger.error(
+                                    "log_repo.row_skip",
+                                    extra={"source_ip": row[2], "error": str(row_exc)},
+                                )
             conn.commit()
         finally:
             cursor.close()
