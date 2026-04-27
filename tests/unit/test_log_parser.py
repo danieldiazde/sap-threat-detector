@@ -58,6 +58,14 @@ class TestNormalizeColumns:
     def test_empty_passthrough(self):
         assert normalize_columns(pd.DataFrame()).empty
 
+    def test_aliases_underscore_id_to_log_id(self):
+        """API _id is the natural dedup key; must map to log_id."""
+        df = pd.DataFrame([{"_id": "abc123", "@timestamp": "x", "client_ip": "1.1.1.1"}])
+        result = normalize_columns(df)
+        assert "log_id" in result.columns
+        assert result["log_id"].iloc[0] == "abc123"
+        assert "_id" not in result.columns
+
 
 class TestValidateSchema:
     def test_valid_passes(self):

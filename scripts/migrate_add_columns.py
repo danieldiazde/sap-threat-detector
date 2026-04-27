@@ -26,6 +26,21 @@ from hdbcli import dbapi  # noqa: E402
 
 _ALREADY_EXISTS_HINTS = ("already exists", "existing object", "cannot use duplicate")
 
+
+def _label_for(stmt: str) -> str:
+    """Best-effort short label for migration output (column or index name)."""
+    upper = stmt.upper()
+    if upper.startswith("ALTER TABLE") and "ADD" in upper:
+        return stmt.split("(", 1)[1].split()[0]
+    if "INDEX" in upper:
+        # CREATE [UNIQUE] INDEX <name> ON ...
+        parts = stmt.split()
+        try:
+            return parts[parts.index("INDEX") + 1]
+        except (ValueError, IndexError):
+            return stmt[:60]
+    return stmt[:60]
+
 NEW_COLUMNS = [
     "ALTER TABLE SECURITY_LOGS ADD (REQUEST_PATH         NVARCHAR(500))",
     "ALTER TABLE SECURITY_LOGS ADD (SAP_APPLICATION      NVARCHAR(100))",
@@ -43,6 +58,9 @@ NEW_COLUMNS = [
     "ALTER TABLE SECURITY_LOGS ADD (LLM_ERROR_MESSAGE    NVARCHAR(500))",
     "ALTER TABLE SECURITY_LOGS ADD (LLM_MODEL_ID         NVARCHAR(100))",
     "ALTER TABLE SECURITY_LOGS ADD (LLM_PROMPT_TOKENS    INTEGER)",
+    # 2026-04-26: capture API _id and dedup against it.
+    "ALTER TABLE SECURITY_LOGS ADD (LOG_ID               NVARCHAR(64))",
+    "CREATE UNIQUE INDEX UX_SECURITY_LOGS_LOG_ID ON SECURITY_LOGS (LOG_ID)",
 ]
 
 
@@ -60,19 +78,19 @@ def main() -> None:
     skipped = 0
     try:
         for stmt in NEW_COLUMNS:
-            col = stmt.split("(")[1].split()[0]
+            label = _label_for(stmt)
             try:
                 cur.execute(stmt)
                 conn.commit()
-                print(f"  ADDED    {col}")
+                print(f"  ADDED    {label}")
                 added += 1
             except Exception as exc:
                 msg = str(exc).lower()
                 if any(hint in msg for hint in _ALREADY_EXISTS_HINTS):
-                    print(f"  SKIPPED  {col}  (already exists)")
+                    print(f"  SKIPPED  {label}  (already exists)")
                     skipped += 1
                 else:
-                    print(f"  ERROR    {col}: {exc}")
+                    print(f"  ERROR    {label}: {exc}")
                     raise
     finally:
         cur.close()
