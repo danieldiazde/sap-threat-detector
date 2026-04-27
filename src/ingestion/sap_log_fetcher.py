@@ -83,6 +83,8 @@ async def fetch_logs(page: int = 1) -> pd.DataFrame:
     """
     Fetch a single page of logs. Returns a normalized DataFrame with an
     ``ingested_at`` column stamped on every row.
+
+    Per the spec, clients only send ``page`` — server controls batch size.
     """
     if settings.mock_api:
         return _fetch_mock_logs()
@@ -90,7 +92,7 @@ async def fetch_logs(page: int = 1) -> pd.DataFrame:
     raw = await _get_with_retry(
         url=f"{settings.sap_api_url}/logs/current",
         headers={"Authorization": f"Bearer {settings.sap_api_key}"},
-        params={"page": page, "page_size": settings.sap_api_page_size},
+        params={"page": page},
     )
     df = parse_raw_response(raw)
     return _stamp_ingested_at(df)
@@ -100,63 +102,94 @@ async def fetch_all_logs() -> pd.DataFrame:
     """
     Fetch every page of logs for the current 30-minute window.
 
-    Calls /info first to check the window_start. If the window hasn't
-    changed since the last fetch, returns an empty DataFrame immediately
-    (saving 12 API calls and ~5,753 duplicate HANA inserts per skipped cycle).
+    Spec-driven loop:
+    1. ``GET /info`` — read ``total_pages`` and ``window_start``.
+    2. If ``window_start`` matches our last successful fetch, skip.
+    3. Iterate ``GET /logs/current?page=1..total_pages``.
+
+    Status-code handling per spec:
+    - ``503`` on /info or /logs/current → "data not loaded yet". Return an
+      empty frame; the next 30-second poll will retry without raising.
+    - ``422`` on /logs/current → "page out of range". Treat as end-of-loop
+      (defensive: should be unreachable since we drive from total_pages).
     """
     global _last_window_start
 
     if settings.mock_api:
         return _fetch_mock_logs()
 
-    # Check if the window has rolled over since our last fetch.
     headers = {"Authorization": f"Bearer {settings.sap_api_key}"}
+
+    # Step 1: /info — also tells us if the window rolled.
     info = await _get_with_retry(
         url=f"{settings.sap_api_url}/info",
         headers=headers,
         params={},
+        non_fatal_statuses=(503,),
     )
-    window_start = info.get("window_start") if isinstance(info, dict) else None
+    if not isinstance(info, dict):
+        logger.info("fetcher.info_unavailable")
+        return pd.DataFrame()
+
+    window_start = info.get("window_start")
     if window_start is not None and window_start == _last_window_start:
         logger.debug("fetcher.skip_duplicate_window", extra={"window_start": window_start})
         return pd.DataFrame()
 
-    # NOTE: _last_window_start is committed AFTER the pagination loop, not here.
-    # Committing early would permanently skip the window if any page fetch fails.
+    try:
+        total_pages = int(info.get("total_pages", 0) or 0)
+    except (TypeError, ValueError):
+        logger.warning("fetcher.invalid_total_pages", extra={"value": info.get("total_pages")})
+        return pd.DataFrame()
 
+    if total_pages <= 0:
+        logger.info("fetcher.empty_window", extra={"window_start": window_start})
+        _last_window_start = window_start
+        return pd.DataFrame()
+
+    if total_pages > MAX_PAGES_PER_WINDOW:
+        logger.warning(
+            "fetcher.max_pages_clamped",
+            extra={"requested": total_pages, "max": MAX_PAGES_PER_WINDOW},
+        )
+        total_pages = MAX_PAGES_PER_WINDOW
+
+    # Step 2: deterministic page loop.
     ingested_at = utcnow()
     collected: list[pd.DataFrame] = []
-    page = 1
-    while True:
+    pages_fetched = 0
+    for page in range(1, total_pages + 1):
         raw = await _get_with_retry(
             url=f"{settings.sap_api_url}/logs/current",
             headers=headers,
-            params={"page": page, "page_size": settings.sap_api_page_size},
+            params={"page": page},
+            non_fatal_statuses=(422, 503),
         )
+        if raw is None:
+            # 422 (out of range) or 503 (not loaded) — stop iterating; the
+            # rows we already have are still valid for this window.
+            logger.info("fetcher.page_skipped", extra={"page": page})
+            break
+        pages_fetched += 1
         df = parse_raw_response(raw)
         if df.empty:
-            break
+            continue
         df["ingested_at"] = ingested_at
         collected.append(df)
 
-        if not _has_next_page(raw, page):
-            break
-        page += 1
-        if page > MAX_PAGES_PER_WINDOW:
-            logger.warning(
-                "fetcher.max_pages_reached",
-                extra={"max_pages": MAX_PAGES_PER_WINDOW, "window_start": window_start},
-            )
-            break
-
-    # Commit only after all pages fetched successfully. If _get_with_retry raised
-    # above, this line is never reached and the window stays unacknowledged so
-    # the next 30-second cycle retries it from page 1.
+    # Commit window_start only after the loop completes (success or graceful
+    # break). If _get_with_retry raised on a fatal status / network error,
+    # this line is never reached and the next cycle retries from page 1.
     _last_window_start = window_start
 
     logger.info(
         "fetcher.window_fetched",
-        extra={"window_start": window_start, "pages": page, "rows": sum(len(d) for d in collected)},
+        extra={
+            "window_start": window_start,
+            "pages_expected": total_pages,
+            "pages_fetched": pages_fetched,
+            "rows": sum(len(d) for d in collected),
+        },
     )
     if not collected:
         return pd.DataFrame()
@@ -204,9 +237,19 @@ _BatchCallback = Callable[[pd.DataFrame], Awaitable[None]]
 
 
 async def _get_with_retry(
-    *, url: str, headers: dict[str, str], params: dict[str, object]
+    *,
+    url: str,
+    headers: dict[str, str],
+    params: dict[str, object],
+    non_fatal_statuses: tuple[int, ...] = (),
 ) -> object:
-    """GET *url* with exponential-backoff retry on transient errors."""
+    """GET *url* with exponential-backoff retry on transient errors.
+
+    Status codes in *non_fatal_statuses* short-circuit to ``None`` instead of
+    raising. Used by callers that want spec-defined codes (e.g., 503 on
+    /info, 422 on /logs/current page-out-of-range) to be treated as
+    "no data this cycle" rather than pipeline errors.
+    """
     last_exc: Exception | None = None
     for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
         try:
@@ -224,8 +267,14 @@ async def _get_with_retry(
             last_exc = exc
             _log_retry(attempt, exc)
         except httpx.HTTPStatusError as exc:
-            # Retry 5xx / 429; fail-fast on other 4xx.
             status = exc.response.status_code
+            if status in non_fatal_statuses:
+                logger.info(
+                    "fetcher.http_non_fatal",
+                    extra={"status": status, "url": url},
+                )
+                return None
+            # Retry 5xx / 429; fail-fast on other 4xx.
             if status >= 500 or status == 429:
                 last_exc = exc
                 _log_retry(attempt, exc)
@@ -250,40 +299,6 @@ def _log_retry(attempt: int, exc: Exception) -> None:
         "fetcher.retry",
         extra={"attempt": attempt, "max": RETRY_MAX_ATTEMPTS, "error": str(exc)},
     )
-
-
-def _has_next_page(raw: object, current_page: int) -> bool:
-    """Detect pagination continuation from the SAP API response envelope.
-
-    The API returns top-level fields: current_page, total_pages, records_in_page,
-    batch_size. Falls back to nested pagination dict for other API shapes.
-    """
-    if not isinstance(raw, dict):
-        return False
-    # SAP API: top-level total_pages
-    total_pages = raw.get("total_pages")
-    if total_pages is not None:
-        try:
-            return current_page < int(total_pages)
-        except (ValueError, TypeError):
-            logger.warning("fetcher.invalid_total_pages", extra={"value": total_pages})
-            return False
-    # Fallback: next_page pointer
-    if raw.get("next_page") is not None:
-        return True
-    # Fallback: nested pagination object
-    pagination = raw.get("pagination") or {}
-    if isinstance(pagination, dict):
-        nested_total = pagination.get("total_pages")
-        if nested_total is not None:
-            try:
-                return current_page < int(nested_total)
-            except (ValueError, TypeError):
-                logger.warning("fetcher.invalid_total_pages", extra={"value": nested_total})
-                return False
-        if pagination.get("has_more") is True:
-            return True
-    return False
 
 
 def _stamp_ingested_at(df: pd.DataFrame, at: datetime | None = None) -> pd.DataFrame:
