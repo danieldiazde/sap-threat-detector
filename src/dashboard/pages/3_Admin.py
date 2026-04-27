@@ -106,7 +106,6 @@ st.subheader("Settings inspector")
 SECRET_FIELDS = {
     "sap_api_key",
     "hana_password",
-    "sap_webhook_secret",
 }
 
 
