@@ -90,6 +90,43 @@ FEATURE_COLUMNS_LEGACY: Final[tuple[str, ...]] = tuple(
 )
 
 
+# ─── LLM detector — feature matrix and shared constants ────────────────────
+#
+# The LLM threat detector lives in src/model/llm_*.py and runs in parallel
+# with the SAP detector. It keys on (LLM_MODEL_ID, LLM_PROMPT_CATEGORY) and
+# scores rows against per-cohort z-score profiles. All constants used by
+# both the SAP and LLM detectors live here so they cannot drift.
+
+# Log types whose rows go to the LLM detector (and are excluded from the SAP detector).
+LLM_LOG_TYPES: Final[frozenset[str]] = frozenset({"LLM_REQUEST", "LLM_ERROR", "LLM_TIMEOUT"})
+
+# Numeric columns we summarize per cohort and z-score against.
+LLM_NUMERIC_PROFILE_COLS: Final[tuple[str, ...]] = (
+    "llm_prompt_tokens",
+    "llm_total_tokens",
+    "llm_cost_usd",
+    "llm_response_time_ms",
+)
+
+# Order matters: this is the column order the LLM Isolation Forests are trained on.
+# Persisted into the model artifact alongside the per-cohort profiles.
+LLM_FEATURE_COLUMNS: Final[tuple[str, ...]] = (
+    "prompt_tokens_z",
+    "total_tokens_z",
+    "cost_z",
+    "response_time_z",
+    "output_input_ratio_z",
+    "near_timeout_cap",
+    "finish_reason_content_filter",
+    "finish_reason_length",
+)
+
+# System-enforced LLM response timeout (audit shows max ~34,999 ms across all rows).
+# Anything within NEAR_TIMEOUT_BUFFER_MS of this cap is suspicious by default.
+LLM_TIMEOUT_CAP_MS: Final[int] = 35_000
+LLM_NEAR_TIMEOUT_THRESHOLD_MS: Final[int] = 30_000
+
+
 # ─── Status code buckets ───────────────────────────────────────────────────
 #
 # The SAP sample logs use both numeric HTTP codes ("200", "404") *and* free-text
