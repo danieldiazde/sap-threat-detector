@@ -285,17 +285,26 @@ class AnomalyRepository:
             cursor.execute(
                 """
                 INSERT INTO ANOMALIES
-                (DETECTED_AT, INGESTED_AT, SOURCE_IP, THREAT_LEVEL, ANOMALY_SCORE,
+                (DETECTED_AT, INGESTED_AT, DETECTOR, SOURCE_IP,
+                 LLM_MODEL_ID, LLM_PROMPT_CATEGORY,
+                 THREAT_LEVEL, ANOMALY_SCORE,
+                 IF_GLOBAL_SCORE, IF_CATEGORY_SCORE, RULE_IDS,
                  TOTAL_REQUESTS, ERROR_RATE, PIPELINE_MTTD_MS, E2E_MTTD_MS,
                  ALERT_ID, DEDUP_KEY, WEBHOOK_SENT, INCIDENT_REPORT_PATH)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.get("detected_at"),
                     record.get("ingested_at"),
+                    str(record.get("detector") or "sap"),
                     record.get("source_ip"),
+                    record.get("llm_model_id"),
+                    record.get("llm_prompt_category"),
                     record.get("threat_level"),
                     float(record.get("anomaly_score", 0) or 0),
+                    _to_float_or_none(record.get("if_global_score")),
+                    _to_float_or_none(record.get("if_category_score")),
+                    record.get("rule_ids"),
                     int(record.get("total_requests", 0) or 0),
                     float(record.get("error_rate", 0) or 0),
                     record.get("pipeline_mttd_ms"),

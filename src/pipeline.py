@@ -32,6 +32,7 @@ from src.common.metrics import metrics
 from src.common.time_utils import utcnow
 from src.ingestion.sap_log_fetcher import fetch_all_logs, reset_window_start
 from src.model.features import extract_features
+from src.model.llm_predict import predict_llm
 from src.model.predict import anomalies_only, predict, reset_active_model
 from src.storage.repositories import anomaly_repository, log_repository, model_version_repository
 
@@ -91,11 +92,15 @@ class Pipeline:
                 metrics.incr_pipeline_runs()
                 return {"status": "no_features", "logs": len(df)}
 
-            # DETECT
+            # DETECT — SAP detector (per-source-IP) + LLM detector (per-cohort).
             batch_min_log_time = _earliest_log_time(df)
-            scored = predict(features_df, ingested_at=ingested_at, batch_min_log_time=batch_min_log_time)
-            anomalies = anomalies_only(scored)
+            sap_scored = predict(features_df, ingested_at=ingested_at, batch_min_log_time=batch_min_log_time)
+            sap_anomalies = anomalies_only(sap_scored)
+            sap_anomalies = sap_anomalies.assign(detector="sap") if not sap_anomalies.empty else sap_anomalies
 
+            llm_anomalies = _safe_predict_llm(df, ingested_at, batch_min_log_time)
+
+            anomalies = _concat_anomalies(sap_anomalies, llm_anomalies)
             anomaly_count = len(anomalies)
             metrics.incr_anomalies(anomaly_count)
 
@@ -103,22 +108,33 @@ class Pipeline:
             alerts_sent = 0
             for _, row in anomalies.iterrows():
                 anomaly_dict = row.to_dict()
-                evidence = _evidence_for_ip(df, str(anomaly_dict.get("source_ip", "")))
+                detector = str(anomaly_dict.get("detector") or "sap").lower()
+                if detector == "llm":
+                    evidence = _evidence_for_cohort(
+                        df,
+                        str(anomaly_dict.get("llm_model_id", "")),
+                        str(anomaly_dict.get("llm_prompt_category", "")),
+                    )
+                    entity = f"{anomaly_dict.get('llm_model_id', 'unknown')}|{anomaly_dict.get('llm_prompt_category', 'unknown')}"
+                else:
+                    evidence = _evidence_for_ip(df, str(anomaly_dict.get("source_ip", "")))
+                    entity = str(anomaly_dict.get("source_ip", ""))
 
                 # Stamp alert_id and dedup_key so they persist to the DB
                 anomaly_dict["alert_id"] = build_alert_id(
-                    str(anomaly_dict.get("source_ip", "")),
+                    entity,
                     str(anomaly_dict.get("threat_level", "")),
                     anomaly_dict.get("detected_at"),
+                    detector=detector,
                 )
                 dedup_tuple = deduper.key_for(anomaly_dict)
-                anomaly_dict["dedup_key"] = f"{dedup_tuple[0]}:{dedup_tuple[1]}"
+                anomaly_dict["dedup_key"] = ":".join(dedup_tuple)
 
                 # Generate incident report for high-severity
                 report_path: str | None = None
                 if str(anomaly_dict.get("threat_level", "")).lower() == "high":
                     report_md = build_incident_report(anomaly_dict, evidence, metrics.snapshot())
-                    incident_id = f"INC-{utcnow().strftime('%Y%m%dT%H%M%S')}-{str(anomaly_dict.get('source_ip', 'unknown')).replace('.', '-')}"
+                    incident_id = _incident_id_for(anomaly_dict, detector)
                     path = write_report(report_md, incident_id)
                     report_path = str(path)
                     anomaly_dict["incident_report_path"] = report_path
@@ -153,7 +169,8 @@ class Pipeline:
                 "features": len(features_df),
                 "anomalies": anomaly_count,
                 "alerts_sent": alerts_sent,
-                "pipeline_mttd_ms": int(scored["pipeline_mttd_ms"].mean()) if not scored.empty else 0,
+                "pipeline_mttd_ms": int(sap_scored["pipeline_mttd_ms"].mean()) if not sap_scored.empty else 0,
+                "llm_anomalies": int(len(llm_anomalies)),
             }
             logger.info("pipeline.run_once.done", extra=summary)
             return summary
@@ -287,6 +304,56 @@ def _evidence_for_ip(df: pd.DataFrame, source_ip: str) -> pd.DataFrame:
     if source_ip and "source_ip" in df.columns:
         return df[df["source_ip"] == source_ip].head(10)
     return df.head(10)
+
+
+def _evidence_for_cohort(df: pd.DataFrame, model_id: str, category: str) -> pd.DataFrame:
+    """Pull up to 10 rows for the (model_id, prompt_category) cohort, prioritizing
+    the most-suspicious ones (errors / timeouts / high cost)."""
+    if df is None or df.empty:
+        return df
+    if "llm_model_id" not in df.columns or "llm_prompt_category" not in df.columns:
+        return df.head(10)
+    mask = (df["llm_model_id"].astype(str) == model_id) & (
+        df["llm_prompt_category"].astype(str) == category
+    )
+    cohort = df[mask]
+    if cohort.empty:
+        return cohort
+    if "llm_status" in cohort.columns:
+        suspicious_mask = ~cohort["llm_status"].astype(str).str.lower().isin(["success", "ok", "200"])
+        suspicious = cohort[suspicious_mask]
+        if not suspicious.empty:
+            return suspicious.head(10)
+    return cohort.head(10)
+
+
+def _safe_predict_llm(
+    df: pd.DataFrame, ingested_at: datetime, batch_min_log_time: datetime | None
+) -> pd.DataFrame:
+    """Run LLM detector; on failure log and return empty rather than killing the cycle."""
+    try:
+        return predict_llm(df, ingested_at=ingested_at, batch_min_log_time=batch_min_log_time)
+    except Exception as exc:
+        logger.warning("pipeline.llm_predict.skipped", extra={"error": str(exc)})
+        return pd.DataFrame()
+
+
+def _concat_anomalies(sap_df: pd.DataFrame, llm_df: pd.DataFrame) -> pd.DataFrame:
+    """Concat SAP + LLM anomaly frames, preserving union of columns."""
+    frames = [d for d in (sap_df, llm_df) if d is not None and not d.empty]
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True, sort=False)
+
+
+def _incident_id_for(anomaly_dict: dict, detector: str) -> str:
+    ts = utcnow().strftime("%Y%m%dT%H%M%S")
+    if detector == "llm":
+        model = str(anomaly_dict.get("llm_model_id", "unknown")).replace("/", "-")
+        category = str(anomaly_dict.get("llm_prompt_category", "unknown")).replace("/", "-")
+        return f"INC-LLM-{ts}-{model}-{category}"
+    ip = str(anomaly_dict.get("source_ip", "unknown")).replace(".", "-")
+    return f"INC-{ts}-{ip}"
 
 
 async def _interruptible_sleep(seconds: float, stop: asyncio.Event) -> None:

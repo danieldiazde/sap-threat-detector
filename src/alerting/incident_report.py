@@ -36,6 +36,8 @@ def build_incident_report(
     metrics_snapshot: dict[str, Any] | None = None,
 ) -> str:
     """Render a markdown forensic report for a single anomaly."""
+    if str(anomaly.get("detector", "sap")).lower() == "llm":
+        return _build_llm_incident_report(anomaly, evidence, metrics_snapshot)
     incident_id = _incident_id(anomaly)
     detected_at = anomaly.get("detected_at") or utcnow()
     source_ip = anomaly.get("source_ip", "unknown")
@@ -107,6 +109,130 @@ _To be completed by the Security Analyst after review._
 ---
 _Generated automatically by `src/alerting/incident_report.py` at `{_fmt_dt(utcnow())}`._
 """
+
+
+def _build_llm_incident_report(
+    anomaly: dict[str, Any],
+    evidence: pd.DataFrame,
+    metrics_snapshot: dict[str, Any] | None,
+) -> str:
+    incident_id = _incident_id(anomaly)
+    detected_at = anomaly.get("detected_at") or utcnow()
+    model_id = anomaly.get("llm_model_id", "unknown")
+    category = anomaly.get("llm_prompt_category", "unknown")
+    threat_level = anomaly.get("threat_level", "unknown")
+    score = float(anomaly.get("anomaly_score", 0) or 0)
+    if_global = anomaly.get("if_global_score")
+    if_category = anomaly.get("if_category_score")
+    pipeline_mttd = anomaly.get("pipeline_mttd_ms", "—")
+    e2e_mttd = anomaly.get("e2e_mttd_ms", "—")
+    total_requests = int(anomaly.get("total_requests", 0) or 0)
+    global_frac = float(anomaly.get("global_anomaly_fraction", 0) or 0)
+    category_frac = float(anomaly.get("category_anomaly_fraction", 0) or 0)
+
+    rule_ids: list[str] = []
+    raw = anomaly.get("rule_ids")
+    if raw:
+        try:
+            import json as _json
+            rule_ids = _json.loads(raw) if isinstance(raw, str) else list(raw)
+        except (ValueError, TypeError):
+            rule_ids = []
+
+    rule_context: dict[str, Any] = {}
+    raw_ctx = anomaly.get("rule_context")
+    if raw_ctx:
+        try:
+            import json as _json
+            rule_context = _json.loads(raw_ctx) if isinstance(raw_ctx, str) else dict(raw_ctx)
+        except (ValueError, TypeError):
+            rule_context = {}
+
+    rules_md = _llm_rules_table(rule_ids, rule_context) if rule_ids else "_No rules fired — anomaly emitted by IF ensemble alone._"
+    evidence_md = _llm_evidence_summary(evidence, model_id, category)
+
+    return f"""# 🤖 Incident Report — {incident_id}
+
+## Summary
+
+| Field | Value |
+|-------|-------|
+| Incident ID | `{incident_id}` |
+| Detected at | `{_fmt_dt(detected_at)}` |
+| Detector | `llm` |
+| LLM model | `{model_id}` |
+| Prompt category | `{category}` |
+| Threat Level | **{str(threat_level).upper()}** |
+| Mean global IF score | `{score:.4f}` |
+| Cohort size | `{total_requests}` |
+| Global anomaly fraction | `{global_frac:.2%}` |
+| Per-category anomaly fraction | `{category_frac:.2%}` |
+| IF global score (mean) | `{if_global if if_global is not None else '—'}` |
+| IF per-category score (mean) | `{if_category if if_category is not None else '—'}` |
+| Pipeline MTTD | `{pipeline_mttd} ms` |
+| End-to-End MTTD | `{e2e_mttd} ms` |
+| Model version | `{anomaly.get('model_version', 'unknown')}` |
+
+## OBSERVE — Cohort context
+
+{evidence_md}
+
+## ANALYZE — Rules fired
+
+{rules_md}
+
+## DETECT — Latency
+
+- **Pipeline MTTD**: `{pipeline_mttd} ms`
+- **End-to-End MTTD**: `{e2e_mttd} ms`
+
+{_metrics_section(metrics_snapshot)}
+
+## RESPOND — Alert actions
+
+- Webhook fired: `{anomaly.get('webhook_sent', True)}`
+- Alert ID: `{anomaly.get('alert_id', 'n/a')}`
+- Dedup key: `{anomaly.get('dedup_key', 'n/a')}`
+
+## Remediation — Recommended next steps
+
+{_llm_recommendations(rule_ids)}
+
+---
+_Generated automatically by `src/alerting/incident_report.py` at `{_fmt_dt(utcnow())}`._
+"""
+
+
+def _llm_rules_table(rule_ids: list[str], rule_context: dict[str, Any]) -> str:
+    rows = ["| Rule | Context |", "|------|---------|"]
+    for rid in rule_ids:
+        ctx = rule_context.get(rid, {})
+        ctx_str = ", ".join(f"`{k}={v}`" for k, v in ctx.items()) if isinstance(ctx, dict) else str(ctx)
+        rows.append(f"| `{rid}` | {ctx_str or '—'} |")
+    return "\n".join(rows)
+
+
+def _llm_evidence_summary(evidence: pd.DataFrame, model_id: Any, category: Any) -> str:
+    if evidence is None or evidence.empty:
+        return f"_No raw rows available for cohort `{model_id}/{category}`._"
+    cols = [c for c in ("datetime", "llm_model_id", "llm_prompt_category", "llm_status", "llm_finish_reason", "llm_total_tokens", "llm_cost_usd", "llm_response_time_ms") if c in evidence.columns]
+    if not cols:
+        return f"_Cohort `{model_id}/{category}` — no LLM columns present in evidence._"
+    return evidence.head(MAX_EVIDENCE_ROWS)[cols].astype(str).to_markdown(index=False)
+
+
+def _llm_recommendations(rule_ids: list[str]) -> str:
+    tips = {
+        "LLM_TOKEN_HIGH": "Token budget anomaly — investigate prompt template inflation or runaway context-stuffing.",
+        "LLM_HIGH_COST_OUTLIER": "Cost outlier — verify caller authorization and check for expensive-model misuse.",
+        "LLM_NEAR_TIMEOUT": "Near-timeout pattern — capacity planning / model rerouting; possible upstream slowness.",
+        "LLM_ERROR_STORM": "Error storm — check provider status; consider failover or temporary backpressure.",
+        "LLM_CONTENT_FILTER_SPIKE": "Content-filter spike — investigate prompt-injection or policy-evasion attempts.",
+        "LLM_EXFIL_SHAPE": "Exfiltration shape — large output/short input ratio; review caller intent and DLP policy.",
+    }
+    if not rule_ids:
+        return "1. No rules fired — review the cohort manually before deciding on remediation."
+    return "\n".join(f"{i}. **{rid}** — {tips.get(rid, 'review cohort.')}" for i, rid in enumerate(rule_ids, 1))
 
 
 def write_report(report_md: str, incident_id: str, *, directory: Path | None = None) -> Path:
