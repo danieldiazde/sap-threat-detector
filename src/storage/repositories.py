@@ -97,10 +97,21 @@ class LogRepository:
         async with self._pool.acquire() as conn:
             if conn is None:
                 return 0
-            await asyncio.to_thread(self._bulk_insert_sync, conn, records)
+            persisted = await asyncio.to_thread(self._bulk_insert_sync, conn, records)
 
-        logger.info("log_repo.hana_insert", extra={"rows": len(records)})
-        return len(records)
+        logger.info(
+            "log_repo.hana_insert",
+            extra={"rows": persisted, "attempted": len(records)},
+        )
+        if persisted == 0 and len(records) > 0:
+            # Every row in a non-empty batch was rejected. Surface this so
+            # the pipeline trips reset_window_start() and re-fetches the
+            # window on the next cycle, instead of acknowledging a window
+            # that landed nothing in HANA.
+            raise RuntimeError(
+                f"log_repo.all_rows_rejected attempted={len(records)}"
+            )
+        return persisted
 
     async def recent_logs(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return the most recent logs (newest first)."""
@@ -165,15 +176,42 @@ class LogRepository:
         "duplicate key",
     )
 
-    def _bulk_insert_sync(self, conn: Any, records: list[dict[str, Any]]) -> None:
+    # Schema-shape errors. Per-row fallback cannot rescue these — every row in
+    # the chunk will fail identically. Re-raise so the pipeline trips
+    # reset_window_start() instead of silently dropping the window.
+    # Incident 2026-04-28: LOG_ID column missing in prod swallowed ~36h of data.
+    _STRUCTURAL_ERROR_HINTS: tuple[str, ...] = (
+        "invalid column name",
+        "unknown column",
+        "column not found",
+        "invalid table name",
+        "could not find table",
+        "table not found",
+    )
+
+    def _bulk_insert_sync(self, conn: Any, records: list[dict[str, Any]]) -> int:
+        """Insert *records* in chunks. Returns count of persisted rows.
+
+        Re-raises on structural/schema errors so the caller can react —
+        per-row fallback is only useful for per-row constraint violations.
+        """
         rows = [self._row_tuple(r) for r in records]
+        persisted = 0
         cursor = conn.cursor()
         try:
             for i in range(0, len(rows), LOG_INSERT_BATCH_SIZE):
                 chunk = rows[i : i + LOG_INSERT_BATCH_SIZE]
                 try:
                     cursor.executemany(self._INSERT_SQL, chunk)
+                    persisted += len(chunk)
                 except Exception as chunk_exc:
+                    msg = str(chunk_exc).lower()
+                    if any(h in msg for h in self._STRUCTURAL_ERROR_HINTS):
+                        logger.error(
+                            "log_repo.structural_error",
+                            extra={"chunk_start": i, "error": str(chunk_exc)},
+                        )
+                        raise
                     # One bad row poisons the chunk — fall back to row-by-row
                     # so the rest of the chunk is not lost.
                     logger.warning(
@@ -183,6 +221,7 @@ class LogRepository:
                     for row in chunk:
                         try:
                             cursor.execute(self._INSERT_SQL, row)
+                            persisted += 1
                         except Exception as row_exc:
                             msg = str(row_exc).lower()
                             if any(h in msg for h in self._UNIQUE_VIOLATION_HINTS):
@@ -199,6 +238,7 @@ class LogRepository:
             conn.commit()
         finally:
             cursor.close()
+        return persisted
 
     @staticmethod
     def _query_recent_sync(conn: Any, limit: int) -> list[dict[str, Any]]:
