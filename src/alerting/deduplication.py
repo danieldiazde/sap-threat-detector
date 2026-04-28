@@ -34,15 +34,27 @@ class AlertDeduper:
         self._ttl: int = ttl_seconds if ttl_seconds is not None else settings.anomaly_dedup_ttl_seconds
         self._lock = threading.Lock()
         # key → expiry POSIX timestamp
-        self._cache: dict[tuple[str, str], float] = {}
+        self._cache: dict[tuple[str, ...], float] = {}
 
     @staticmethod
-    def key_for(anomaly: dict[str, Any]) -> tuple[str, str]:
-        """Build the dedup key from an anomaly row."""
-        return (
-            str(anomaly.get("source_ip", "unknown")),
-            str(anomaly.get("threat_level", "unknown")),
-        )
+    def key_for(anomaly: dict[str, Any]) -> tuple[str, ...]:
+        """Build the dedup key from an anomaly row.
+
+        SAP anomalies key on ``(detector, source_ip, threat_level)``; LLM
+        cohort anomalies key on ``(detector, llm_model_id, llm_prompt_category,
+        threat_level)``. Threat level is in the key so an attacker escalating
+        from medium → high produces a fresh alert.
+        """
+        detector = str(anomaly.get("detector") or "sap").lower()
+        threat_level = str(anomaly.get("threat_level", "unknown"))
+        if detector == "llm":
+            return (
+                "llm",
+                str(anomaly.get("llm_model_id", "unknown")),
+                str(anomaly.get("llm_prompt_category", "unknown")),
+                threat_level,
+            )
+        return ("sap", str(anomaly.get("source_ip", "unknown")), threat_level)
 
     def should_fire(self, anomaly: dict[str, Any]) -> bool:
         """
