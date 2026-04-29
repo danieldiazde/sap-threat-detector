@@ -58,19 +58,29 @@ logger = get_logger(__name__)
 # Cohort is anomalous when either:
 #   - any rule fires, OR
 #   - more than this fraction of cohort rows are predicted -1 by the global IF.
-# 0.05 is 5x the contamination rate (0.01) so it represents a meaningful
-# departure from the background anomaly noise.
-COHORT_ANOMALY_FRACTION_THRESHOLD: float = 0.05
+# Calibrated 2026-04-28 from the preview run on 5,000 real HANA rows: average
+# cohort size in production batches is ~15 rows, so a 0.05 floor only requires
+# 1 anomalous row — within sampling noise. Raised to 0.15 (≈15x the
+# contamination rate of 0.01) so an IF-only emit needs at least 2-3 rows in a
+# 15-row cohort to depart meaningfully from the background.
+COHORT_ANOMALY_FRACTION_THRESHOLD: float = 0.15
 
 # IF-derived severity thresholds, applied to the cohort's anomaly fraction
 # on the global model. The rule severity is computed independently and the
 # final severity is max() of the two (with one-tier escalation on ensemble
-# agreement, see _combine_severity).
+# agreement, see _combine_severity). Tightened 2026-04-28 — old 0.20/0.50
+# admitted too many IF-only "medium" emissions on small cohorts.
 IF_SEVERITY_THRESHOLDS: dict[Severity, float] = {
-    "high":   0.50,
-    "medium": 0.20,
+    "high":   0.60,
+    "medium": 0.35,
     "low":    COHORT_ANOMALY_FRACTION_THRESHOLD,
 }
+
+# Ensemble agreement (one-tier severity escalation) requires meaningful
+# anomaly fractions on BOTH the global and per-category IF, not just both
+# above the emit floor. Without this, a low-severity cohort got promoted to
+# medium whenever both models flagged a single row.
+ENSEMBLE_AGREEMENT_FRACTION: float = 0.20
 
 
 # ─── Public API ────────────────────────────────────────────────────────────
@@ -304,8 +314,8 @@ def _combine_severity(
     """
     base_rank = max(SEVERITY_RANK[rule_severity], SEVERITY_RANK[if_severity])
     ensemble_agreement = (
-        global_anomaly_fraction >= COHORT_ANOMALY_FRACTION_THRESHOLD
-        and category_anomaly_fraction >= COHORT_ANOMALY_FRACTION_THRESHOLD
+        global_anomaly_fraction >= ENSEMBLE_AGREEMENT_FRACTION
+        and category_anomaly_fraction >= ENSEMBLE_AGREEMENT_FRACTION
     )
     if ensemble_agreement:
         base_rank = min(3, base_rank + 1)
