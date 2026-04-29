@@ -94,7 +94,7 @@ async def post_alert_message(message: str) -> dict[str, Any]:
     if settings.mock_webhook:
         logger.info(
             "webhook.mock_freeform",
-            extra={"message": msg, "message_len": msg_len, "source": "agent"},
+            extra={"alert_message": msg, "message_len": msg_len, "source": "agent"},
         )
         return {"ok": True, "status": "mock", "message_len": msg_len}
 
