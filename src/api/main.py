@@ -43,6 +43,7 @@ from src.common.metrics import metrics
 from src.common.time_utils import utcnow
 from src.ingestion.sap_log_fetcher import close_client as close_fetcher_client
 from src.model.features import extract_features
+from src.model.llm_train import llm_registry
 from src.model.predict import predict
 from src.model.train import train as train_model
 from src.model.versioning import ModelNotFoundError, registry
@@ -95,6 +96,70 @@ def _bootstrap_model() -> None:
     logger.info("api.bootstrap_model.done", extra={"version": report.get("version_tag")})
 
 
+def _bootstrap_llm_model() -> None:
+    """Train an initial LLM bundle from HANA if none exists on disk."""
+    import pandas as pd
+    from hdbcli import dbapi
+    from src.model.llm_train import train_llm_ensemble
+
+    _COLUMN_MAP = {
+        "DATETIME": "datetime",
+        "SOURCE_IP": "source_ip",
+        "STATUS": "status",
+        "EVENT_DESCRIPTION": "event_description",
+        "PORT_SERVICE": "port_service",
+        "LOG_TYPE": "log_type",
+        "LLM_MODEL_ID": "llm_model_id",
+        "LLM_PROMPT_CATEGORY": "llm_prompt_category",
+        "LLM_PROMPT_TOKENS": "llm_prompt_tokens",
+        "LLM_TOTAL_TOKENS": "llm_total_tokens",
+        "LLM_COST_USD": "llm_cost_usd",
+        "LLM_RESPONSE_TIME_MS": "llm_response_time_ms",
+        "LLM_FINISH_REASON": "llm_finish_reason",
+        "LLM_STATUS": "llm_status",
+        "LLM_ERROR_MESSAGE": "llm_error_message",
+        "INGESTED_AT": "ingested_at",
+    }
+
+    logger.info("api.bootstrap_llm_model.start")
+    conn = dbapi.connect(
+        address=settings.hana_host,
+        port=settings.hana_port,
+        user=settings.hana_user,
+        password=settings.hana_password,
+        databaseName=settings.hana_database,
+    )
+    try:
+        cur = conn.cursor()
+        cols = ", ".join(_COLUMN_MAP.keys())
+        cur.execute(
+            f"SELECT {cols} FROM SECURITY_LOGS"
+            " WHERE LOG_TYPE LIKE 'LLM\\_%' ESCAPE '\\'"
+            " AND LLM_MODEL_ID IS NOT NULL"
+        )
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    if not rows:
+        logger.warning("api.bootstrap_llm_model.no_rows")
+        return
+
+    df = pd.DataFrame(rows, columns=list(_COLUMN_MAP.keys())).rename(columns=_COLUMN_MAP)
+    bundle = train_llm_ensemble(df)
+    version_tag = llm_registry.save(bundle, notes="auto-bootstrapped at startup")
+    logger.info("api.bootstrap_llm_model.done", extra={"version": version_tag})
+
+
+async def _llm_bootstrap() -> None:
+    """Async wrapper: run the sync LLM bootstrap in a thread; log failures without crashing."""
+    try:
+        await asyncio.to_thread(_bootstrap_llm_model)
+    except Exception as exc:
+        logger.error("api.bootstrap_llm_model.failed", extra={"error": str(exc)})
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
@@ -127,6 +192,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         hana_keepalive(), name="hana-keepalive"
     )
 
+    # LLM bundle bootstrap — background task so the health check passes immediately.
+    # _safe_predict_llm tolerates a missing bundle (returns empty), so the pipeline
+    # runs normally while training completes in the background.
+    _llm_bootstrap_task: asyncio.Task[None] | None = None
+    if not settings.mock_hana and llm_registry.latest_tag() is None:
+        _llm_bootstrap_task = asyncio.create_task(_llm_bootstrap(), name="llm-bootstrap")
+
     yield
 
     # Shutdown
@@ -141,6 +213,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _keepalive_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await _keepalive_task
+    if _llm_bootstrap_task is not None and not _llm_bootstrap_task.done():
+        _llm_bootstrap_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _llm_bootstrap_task
     await close_fetcher_client()
     await pool.close()
 
