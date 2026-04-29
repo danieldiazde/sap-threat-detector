@@ -35,7 +35,7 @@ CREATE TABLE SECURITY_LOGS (
     LLM_PROMPT_CATEGORY  NVARCHAR(100),           -- Finance | HR | Support | etc.
     LLM_ERROR_MESSAGE    NVARCHAR(500),           -- populated when llm_status = error
     LLM_MODEL_ID         NVARCHAR(100),           -- gpt-4 | claude-3-opus | etc.
-    LLM_PROMPT_TOKENS    INTEGER,                 -- input tokens; >50k signals data exfiltration
+    LLM_PROMPT_TOKENS    INTEGER,                 -- input tokens (caps ~2k in observed traffic)
     INGESTED_AT       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
 );
 

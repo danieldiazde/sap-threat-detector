@@ -3,14 +3,12 @@ sap_log_fetcher.py
 ------------------
 OBSERVE phase — paginated ingestion of security logs from the SAP API.
 
-Ingestion is async and auto-retried on transient errors. Until
-``SAP_API_URL`` is set, the fetcher returns rows from the local mock CSV
-so the rest of the pipeline can run end-to-end before April 13.
+Ingestion is async and auto-retried on transient errors. When ``SAP_API_URL``
+is unset, the fetcher returns rows from the local mock CSV so the pipeline
+can run end-to-end without the live API.
 
 Every returned batch carries an ``ingested_at`` timestamp so downstream
 code (``predict``, ``pipeline``) can compute the pipeline MTTD.
-
-Owner: Data Architect & Backend Developer
 """
 
 from __future__ import annotations
