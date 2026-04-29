@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import random
 from typing import Any
 
@@ -136,6 +137,9 @@ def format_alert_message(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame)
 
 def _what_clause(anomaly_row: dict[str, Any]) -> str:
     """Pick the most specific threat label available, fall back to a generic."""
+    if str(anomaly_row.get("detector", "sap")).lower() == "llm":
+        return _llm_what_clause(anomaly_row)
+
     sql_hits = int(anomaly_row.get("sql_injection_hits", 0) or 0)
     brute_score = float(anomaly_row.get("brute_force_score", 0) or 0)
     suspicious = float(anomaly_row.get("suspicious_path_ratio", 0) or 0)
@@ -154,6 +158,38 @@ def _what_clause(anomaly_row: dict[str, Any]) -> str:
     return f"{kind} on {target}."
 
 
+def _llm_what_clause(anomaly_row: dict[str, Any]) -> str:
+    rule_label = _first_rule_label(anomaly_row)
+    threat_level = str(anomaly_row.get("threat_level", "anomaly")).lower()
+    model = str(anomaly_row.get("llm_model_id", "unknown"))
+    category = str(anomaly_row.get("llm_prompt_category", "unknown"))
+    kind = rule_label or f"{threat_level.title()} LLM cohort anomaly"
+    return f"{kind} on LLM {model}/{category}."
+
+
+def _first_rule_label(anomaly_row: dict[str, Any]) -> str | None:
+    raw = anomaly_row.get("rule_ids")
+    if not raw:
+        return None
+    try:
+        ids = json.loads(raw) if isinstance(raw, str) else list(raw)
+    except (ValueError, TypeError):
+        return None
+    if not ids:
+        return None
+    return _RULE_LABELS.get(str(ids[0]), str(ids[0]))
+
+
+_RULE_LABELS: dict[str, str] = {
+    "LLM_TOKEN_HIGH": "LLM token-budget anomaly",
+    "LLM_HIGH_COST_OUTLIER": "LLM high-cost outlier",
+    "LLM_NEAR_TIMEOUT": "LLM near-timeout pattern",
+    "LLM_ERROR_STORM": "LLM error storm",
+    "LLM_CONTENT_FILTER_SPIKE": "LLM content-filter spike",
+    "LLM_EXFIL_SHAPE": "LLM exfiltration-shape pattern",
+}
+
+
 def _when_clause(anomaly_row: dict[str, Any]) -> str:
     detected_at = anomaly_row.get("detected_at") or utcnow()
     if hasattr(detected_at, "isoformat"):
@@ -162,6 +198,9 @@ def _when_clause(anomaly_row: dict[str, Any]) -> str:
 
 
 def _why_clause(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> str:
+    if str(anomaly_row.get("detector", "sap")).lower() == "llm":
+        return _llm_why_clause(anomaly_row)
+
     total = int(anomaly_row.get("total_requests", 0) or 0)
     error_rate = float(anomaly_row.get("error_rate", 0) or 0)
     denied = float(anomaly_row.get("denied_ratio", 0) or 0)
@@ -188,6 +227,29 @@ def _why_clause(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> str:
     if window:
         return f"{head} from IP {source_ip} {window}."
     return f"{head} from IP {source_ip}."
+
+
+def _llm_why_clause(anomaly_row: dict[str, Any]) -> str:
+    total = int(anomaly_row.get("total_requests", 0) or 0)
+    global_frac = float(anomaly_row.get("global_anomaly_fraction", 0) or 0)
+    cat_frac = float(anomaly_row.get("category_anomaly_fraction", 0) or 0)
+    score = float(anomaly_row.get("anomaly_score", 0) or 0)
+    rule_ids: list[str] = []
+    raw = anomaly_row.get("rule_ids")
+    if raw:
+        try:
+            rule_ids = json.loads(raw) if isinstance(raw, str) else list(raw)
+        except (ValueError, TypeError):
+            rule_ids = []
+    parts: list[str] = []
+    if rule_ids:
+        parts.append("rules=" + ",".join(rule_ids[:3]))
+    parts.append(f"global_anom={global_frac:.0%}")
+    if cat_frac:
+        parts.append(f"cat_anom={cat_frac:.0%}")
+    parts.append(f"{total} reqs")
+    parts.append(f"score={score:.2f}")
+    return ", ".join(parts) + "."
 
 
 _TARGET_LABEL_MAX = 80
@@ -222,19 +284,25 @@ def _evidence_window(evidence_df: pd.DataFrame) -> str:
 # ─── Internal helpers ──────────────────────────────────────────────────────
 
 
-def build_alert_id(source_ip: str, threat_level: str, detected_at: Any) -> str:
+def build_alert_id(
+    entity: str,
+    threat_level: str,
+    detected_at: Any,
+    *,
+    detector: str = "sap",
+) -> str:
     """
     Deterministic alert ID for our internal ``ANOMALIES.ALERT_ID`` column.
 
-    Rounded to the minute so retries within the same minute share the same
-    ID. Not transmitted to the SAP /alert endpoint — purely a local identity
-    used for HANA dedup and dashboard linking.
+    *entity* is the source_ip for SAP anomalies and ``"<model_id>|<category>"``
+    for LLM cohort anomalies. Rounded to the minute so retries within the same
+    minute share the same ID. Not transmitted to the SAP /alert endpoint.
     """
     if hasattr(detected_at, "strftime"):
         minute = detected_at.strftime("%Y%m%dT%H%M")
     else:
         minute = str(detected_at)[:16]
-    raw = f"{source_ip}|{threat_level}|{minute}"
+    raw = f"{detector}|{entity}|{threat_level}|{minute}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
