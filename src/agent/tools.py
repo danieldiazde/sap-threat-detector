@@ -25,13 +25,24 @@ for the v2 helpers that will land alongside this module.
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from src.agent.helpers import (
+    breakdown_by,
+    compare_windows,
+    correlate,
+    time_series,
+)
+from src.agent.semantic_loader import describe_table, known_tables
 from src.alerting.sap_webhook import MESSAGE_MAX_CHARS, format_alert_message
+from src.common.config import settings
 from src.common.logging import get_logger
 from src.common.time_utils import iso, utcnow
 from src.ingestion.sap_log_fetcher import fetch_info, fetch_logs
+from src.storage.pool import pool
 from src.storage.repositories import (
     anomaly_repository,
     log_repository,
@@ -39,6 +50,12 @@ from src.storage.repositories import (
 )
 
 logger = get_logger(__name__)
+
+# ─── v2 constants ──────────────────────────────────────────────────────────
+
+CUSTOM_QUERY_ROW_CAP: int = 20  # plan §1
+CUSTOM_QUERY_TIMEOUT_S: float = 10.0  # plan §10b
+CUSTOM_QUERY_ERROR_MAX: int = 400
 
 # ─── Tool implementations ──────────────────────────────────────────────────
 
@@ -207,6 +224,250 @@ async def submit_alert(
     }
 
 
+# ─── v2 tools ──────────────────────────────────────────────────────────────
+
+
+async def describe_schema(table_name: str) -> dict[str, Any]:
+    """Rich per-table metadata (columns, meanings, common filters,
+    metrics, example queries). Loaded from ``semantic_model.yaml``.
+    """
+    payload = describe_table(table_name)
+    if payload is None:
+        return {
+            "error": f"unknown table '{table_name}'. Known: {sorted(known_tables())}",
+            "_render": "raw",
+        }
+    payload["_render"] = "raw"
+    return payload
+
+
+async def sample_table(table: str, n: int = 5) -> dict[str, Any]:
+    """Return *n* sample rows (newest-first) from one of the known tables.
+
+    Whitelist-validated against the semantic model so the agent cannot
+    request arbitrary tables. Capped at 10 rows regardless of *n*.
+    """
+    table_u = (table or "").upper().strip()
+    if table_u not in known_tables():
+        return {
+            "error": f"unknown table '{table}'. Known: {sorted(known_tables())}",
+            "_render": "raw",
+        }
+    n = max(1, min(int(n), 10))
+
+    if settings.mock_hana:
+        return {
+            "table": table_u, "rows": [], "row_count": 0,
+            "_mock": True, "_render": "table",
+        }
+
+    # Each table has a different "newest first" column — keep the
+    # ordering keys explicit instead of inferring.
+    order_col = {
+        "SECURITY_LOGS": "INGESTED_AT",
+        "ANOMALIES": "DETECTED_AT",
+        "MODEL_VERSIONS": "TRAINED_AT",
+    }[table_u]
+    sql = f"SELECT TOP {n} * FROM {table_u} ORDER BY {order_col} DESC"
+
+    try:
+        async with pool.acquire() as conn:
+            if conn is None:
+                return {"error": "hana_unavailable", "_render": "raw"}
+            rows = await asyncio.to_thread(_run_select_rows, conn, sql, ())
+    except Exception as exc:
+        logger.exception("agent.sample_table.failed", extra={"table": table_u})
+        return {"error": f"{type(exc).__name__}: {exc}"[:400], "_render": "raw"}
+    return {
+        "table": table_u, "rows": rows, "row_count": len(rows),
+        "_render": "table",
+    }
+
+
+# ─── run_custom_query (hardened, plan §1 + §2) ────────────────────────────
+
+# Single-statement SELECT only. Reject anything that smells like DML/DDL
+# even if it appears after a comment — block multi-statements outright.
+_FORBIDDEN_TOKENS = re.compile(
+    r"(?i)\b("
+    r"insert|update|delete|drop|truncate|alter|create|grant|revoke|"
+    r"merge|call|exec|execute|rename|comment"
+    r")\b"
+)
+_LIMIT_TRAILING = re.compile(r"(?is)\blimit\s+\d+\s*;?\s*$")
+
+
+def _enforce_limit(sql: str, cap: int) -> str:
+    """Replace any trailing LIMIT with LIMIT *cap*; otherwise append it.
+
+    HANA accepts LIMIT as a final clause. We always pass *cap+1* (caller
+    decides) so the truncated flag can be derived from the row count.
+    """
+    stripped = sql.rstrip().rstrip(";").rstrip()
+    if _LIMIT_TRAILING.search(stripped + ";"):
+        stripped = _LIMIT_TRAILING.sub("", stripped + ";").rstrip().rstrip(";").rstrip()
+    return f"{stripped} LIMIT {cap}"
+
+
+def _classify_error(msg: str) -> str | None:
+    """One-line hint for common HANA errors."""
+    low = msg.lower()
+    if "invalid column name" in low or "unknown column" in low:
+        return "Unknown column. Call describe_schema(table_name) for the column list."
+    if "invalid table name" in low or "could not find table" in low or "table not found" in low:
+        return "Unknown table. Allowed tables: SECURITY_LOGS, ANOMALIES, MODEL_VERSIONS."
+    if "syntax error" in low:
+        return "Syntax error — re-check keywords and parentheses."
+    if "ambiguous" in low:
+        return "Ambiguous column reference — qualify with the table name."
+    return None
+
+
+def _sanitize_error(exc: BaseException) -> dict[str, Any]:
+    raw = f"{type(exc).__name__}: {exc}"
+    # Strip anything that looks like a connection string (user@host:port).
+    raw = re.sub(r"\S+@\S+:\d+", "<conn>", raw)
+    msg = raw[:CUSTOM_QUERY_ERROR_MAX]
+    out: dict[str, Any] = {"error": msg}
+    hint = _classify_error(msg)
+    if hint:
+        out["hint"] = hint
+    return out
+
+
+async def run_custom_query(
+    sql: str,
+    count_total: bool = False,
+) -> dict[str, Any]:
+    """Run an analyst-authored SELECT with hard safety rails.
+
+    - Read-only (SELECT). DML/DDL tokens trigger an immediate validation
+      error before HANA is touched.
+    - Always capped at ``CUSTOM_QUERY_ROW_CAP`` rows. We send LIMIT 21 to
+      detect truncation; if 21 rows come back we flag ``truncated=True``
+      and return only the first 20.
+    - ``count_total=True`` (opt-in) wraps the inner query in
+      ``SELECT COUNT(*) FROM (...)`` and returns the total instead of
+      rows. Off by default — HANA re-scans on subquery COUNT, doubling
+      latency on big tables (plan §1).
+    - HANA errors are sanitized + classified (plan §2). The orchestrator
+      counts these for the per-turn circuit breaker.
+    """
+    raw_sql = (sql or "").strip()
+    if not raw_sql:
+        return {"error": "empty_query", "_render": "raw"}
+    # Reject multi-statements — HANA's hdbcli would refuse anyway, but
+    # we want an obvious error before the round-trip.
+    if ";" in raw_sql.rstrip(";"):
+        return {
+            "error": "multi-statement queries are not allowed",
+            "query_attempted": raw_sql[:200],
+            "_render": "raw",
+        }
+    no_trailing_semi = raw_sql.rstrip(";").strip()
+    lowered = no_trailing_semi.lstrip().lower()
+    if not (lowered.startswith("select") or lowered.startswith("with")):
+        return {
+            "error": "only SELECT statements are allowed",
+            "query_attempted": raw_sql[:200],
+            "_render": "raw",
+        }
+    forbidden = _FORBIDDEN_TOKENS.search(no_trailing_semi)
+    if forbidden:
+        return {
+            "error": f"forbidden keyword '{forbidden.group(1)}'",
+            "query_attempted": raw_sql[:200],
+            "_render": "raw",
+        }
+
+    if count_total:
+        executed = f"SELECT COUNT(*) AS total FROM ({no_trailing_semi})"
+    else:
+        executed = _enforce_limit(no_trailing_semi, CUSTOM_QUERY_ROW_CAP + 1)
+
+    if settings.mock_hana:
+        return {
+            "rows": [], "row_count_returned": 0, "truncated": False,
+            "columns": [], "query_executed": executed, "elapsed_ms": 0,
+            "_mock": True, "_render": "table",
+        }
+
+    started = time.monotonic()
+    try:
+        async def _go() -> dict[str, Any]:
+            async with pool.acquire() as conn:
+                if conn is None:
+                    return {"error": "hana_unavailable", "query_attempted": executed}
+                return await asyncio.to_thread(
+                    _run_select_columns, conn, executed, ()
+                )
+        result = await asyncio.wait_for(_go(), timeout=CUSTOM_QUERY_TIMEOUT_S)
+    except TimeoutError:
+        return {
+            "error": "query_timeout",
+            "elapsed_ms": int(CUSTOM_QUERY_TIMEOUT_S * 1000),
+            "query_attempted": executed,
+            "_render": "raw",
+        }
+    except Exception as exc:
+        logger.exception("agent.run_custom_query.failed")
+        out = _sanitize_error(exc)
+        out["query_attempted"] = executed
+        out["_render"] = "raw"
+        return out
+
+    if "error" in result:
+        return {**result, "_render": "raw"}
+
+    rows: list[dict[str, Any]] = result["rows"]
+    cols: list[str] = result["columns"]
+
+    if count_total:
+        total = rows[0].get("total") if rows else 0
+        return {
+            "total": int(total) if total is not None else 0,
+            "query_executed": executed,
+            "elapsed_ms": int((time.monotonic() - started) * 1000),
+            "_render": "scalar",
+        }
+
+    truncated = len(rows) > CUSTOM_QUERY_ROW_CAP
+    if truncated:
+        rows = rows[:CUSTOM_QUERY_ROW_CAP]
+    return {
+        "rows": rows,
+        "row_count_returned": len(rows),
+        "truncated": truncated,
+        "columns": cols,
+        "query_executed": executed,
+        "elapsed_ms": int((time.monotonic() - started) * 1000),
+        "_render": "table",
+    }
+
+
+def _run_select_rows(conn: Any, sql: str, params: tuple) -> list[dict[str, Any]]:
+    cursor = conn.cursor()
+    try:
+        cursor.execute(sql, params)
+        cols = [d[0].lower() for d in (cursor.description or [])]
+        return [dict(zip(cols, r, strict=False)) for r in cursor.fetchall()]
+    finally:
+        cursor.close()
+
+
+def _run_select_columns(
+    conn: Any, sql: str, params: tuple
+) -> dict[str, Any]:
+    cursor = conn.cursor()
+    try:
+        cursor.execute(sql, params)
+        cols = [d[0].lower() for d in (cursor.description or [])]
+        rows = [dict(zip(cols, r, strict=False)) for r in cursor.fetchall()]
+        return {"rows": rows, "columns": cols}
+    finally:
+        cursor.close()
+
+
 # ─── Dispatcher registry ───────────────────────────────────────────────────
 
 ToolFn = Callable[..., Awaitable[dict[str, Any]]]
@@ -221,6 +482,14 @@ TOOL_REGISTRY: dict[str, ToolFn] = {
     "get_current_window_info": get_current_window_info,
     "get_current_logs_sample": get_current_logs_sample,
     "submit_alert": submit_alert,
+    # ── v2 ──
+    "describe_schema": describe_schema,
+    "sample_table": sample_table,
+    "breakdown_by": breakdown_by,
+    "compare_windows": compare_windows,
+    "time_series": time_series,
+    "correlate": correlate,
+    "run_custom_query": run_custom_query,
 }
 
 
