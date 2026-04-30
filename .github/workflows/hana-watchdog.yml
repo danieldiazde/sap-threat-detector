@@ -24,15 +24,21 @@ jobs:
             https://sap-threat-detector.cfapps.us10-001.hana.ondemand.com/ready || echo "000")
 
           echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "HTTP $HTTP_CODE — response body:"
+          cat /tmp/ready_body.json 2>/dev/null || echo "(no body)"
+          echo ""
 
-          if [ "$HTTP_CODE" = "000" ]; then
-            echo "App did not respond (timeout or connection refused)"
-            echo "needs_wake=true" >> $GITHUB_OUTPUT
-          else
-            echo "HTTP $HTTP_CODE — response body:"
-            cat /tmp/ready_body.json
-            echo ""
-            HANA_OK=$(python3 -c "
+          # Only 200 (ready) and 503 (not ready) are valid /ready responses.
+          # Anything else (000 timeout, 404 router blip, 5xx app crash) is a
+          # transient error that must not trigger a wake — we only have signal
+          # about HANA when the app itself answers with the standard payload.
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "503" ]; then
+            echo "Non-standard response from /ready (HTTP $HTTP_CODE). Treating as transient — skipping this run."
+            echo "needs_wake=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          HANA_OK=$(python3 -c "
           import json
           try:
               with open('/tmp/ready_body.json') as f:
@@ -42,14 +48,13 @@ jobs:
           except Exception:
               print('false')
           ")
-            echo "hana_ok=$HANA_OK" >> $GITHUB_OUTPUT
-            if [ "$HANA_OK" != "true" ]; then
-              echo "HANA is not reachable per /ready → will wake"
-              echo "needs_wake=true" >> $GITHUB_OUTPUT
-            else
-              echo "HANA is connected and healthy"
-              echo "needs_wake=false" >> $GITHUB_OUTPUT
-            fi
+          echo "hana_ok=$HANA_OK" >> $GITHUB_OUTPUT
+          if [ "$HANA_OK" != "true" ]; then
+            echo "HANA is not reachable per /ready → will wake"
+            echo "needs_wake=true" >> $GITHUB_OUTPUT
+          else
+            echo "HANA is connected and healthy"
+            echo "needs_wake=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Install CF CLI
