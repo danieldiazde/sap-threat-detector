@@ -4,6 +4,26 @@
 > v2 is **purely additive** to v1 — no rework, no breaking changes.
 > Read v1 first; this doc only describes deltas.
 
+## Implementation progress tracker
+
+> Updated as each phase commits. Use this to resume if a session is
+> interrupted. "Status" reflects what's actually merged on
+> `feat/conversational-agent`, not what's been designed.
+
+| Phase | Scope | Status | Commit |
+|---|---|---|---|
+| A | Foundations: `semantic_model.yaml`, `semantic_loader.py`, `events.py`, `truncation.py` | done | (this commit) |
+| B | New tools: `helpers.py` (4 helpers), `describe_schema`, `sample_table`, hardened `run_custom_query`; registry+schemas wired | not started | — |
+| C | Agent loop rewrite: async generator, circuit breaker, observation compaction, prompt caching, timeouts | not started | — |
+| D | UI: `5_Agent.py` consumes async generator, `st.status` per tool, `_render` hints, streamed text | not started | — |
+| E | Tests: truncation, circuit breaker, helper whitelists, `run_custom_query` LIMIT-21 + count_total + error sanitization | not started | — |
+
+**Resume checklist after a fresh session:**
+1. `git log --oneline feat/conversational-agent ^dev` to see what's already in.
+2. Cross-check against the table above — fix any drift.
+3. Pick up from the first row whose status is `not started` or `in progress`.
+4. Each phase ends with a commit; the user reviews before the next phase starts.
+
 ## Why v2 exists
 v1 answers a closed set of canned questions. v2 lets the agent *compose
 its own analysis* from a semantic model + a small set of analytical
