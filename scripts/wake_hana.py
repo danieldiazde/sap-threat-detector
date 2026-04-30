@@ -2,7 +2,8 @@
 wake_hana.py
 ------------
 Check if the SAP HANA Cloud CF service is stopped and start it if needed.
-Polls every 30 seconds until the instance reports 'running'.
+Polls every 30 seconds until the instance reports 'running', then verifies
+the database actually accepts SQL connections.
 
 Usage:
     python scripts/wake_hana.py
@@ -10,9 +11,11 @@ Usage:
 Requirements:
     - CF CLI installed and logged in (cf login done already)
     - Targeting the correct org/space (cf target)
+    - HANA_HOST/HANA_PORT/HANA_USER/HANA_PASSWORD in env for the SQL probe
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -87,6 +90,51 @@ def start_instance() -> bool:
     return True
 
 
+def verify_sql_connect() -> bool:
+    """
+    Open a real SQL connection to HANA and run SELECT 1.
+
+    The BTP control-plane status ("running") and the HANA SQL endpoint can
+    disagree: the service reports running while the database itself is still
+    stopped and rejects connections with error 1890. We need to probe SQL
+    directly to know the DB is actually usable.
+    """
+    host = os.environ.get("HANA_HOST")
+    port = os.environ.get("HANA_PORT")
+    user = os.environ.get("HANA_USER")
+    password = os.environ.get("HANA_PASSWORD")
+
+    if not all([host, port, user, password]):
+        print(f"[{ts()}] SQL probe skipped: HANA_* env vars not all set.")
+        return False
+
+    try:
+        from hdbcli import dbapi
+    except ImportError:
+        print(f"[{ts()}] SQL probe skipped: hdbcli not installed.")
+        return False
+
+    try:
+        conn = dbapi.connect(
+            address=host,
+            port=int(port),
+            user=user,
+            password=password,
+            encrypt=True,
+            sslValidateCertificate=False,
+            connectTimeout=10000,
+        )
+        cur = conn.cursor()
+        cur.execute("SELECT 1 FROM DUMMY")
+        cur.fetchone()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as exc:
+        print(f"[{ts()}] SQL probe FAILED: {exc}")
+        return False
+
+
 def main() -> None:
     print(f"[{ts()}] Checking HANA Cloud service: {SERVICE_NAME}")
     print("-" * 60)
@@ -99,8 +147,17 @@ def main() -> None:
     print(f"[{ts()}] Current status: {status}")
 
     if status == "running":
-        print(f"[{ts()}] HANA is already running. Nothing to do.")
-        sys.exit(0)
+        print(f"[{ts()}] CF reports running. Verifying SQL connectivity...")
+        if verify_sql_connect():
+            print(f"[{ts()}] HANA is running and accepting SQL.")
+            sys.exit(0)
+        print(
+            f"[{ts()}] CF reports running but SQL is unreachable. "
+            "The database instance is stopped at the DB layer despite the "
+            "service object showing 'running'. Manual action required: "
+            "stop and start the HANA instance from BTP cockpit."
+        )
+        sys.exit(1)
 
     if status == "stopped":
         ok = start_instance()
@@ -125,8 +182,16 @@ def main() -> None:
 
         if status == "running":
             print("-" * 60)
-            print(f"[{ts()}] HANA Cloud is running.")
-            sys.exit(0)
+            print(f"[{ts()}] CF reports running. Verifying SQL connectivity...")
+            if verify_sql_connect():
+                print(f"[{ts()}] HANA Cloud is running and accepting SQL.")
+                sys.exit(0)
+            print(
+                f"[{ts()}] CF reports running but SQL is still unreachable. "
+                "Manual action required: stop+start the HANA instance from "
+                "BTP cockpit."
+            )
+            sys.exit(1)
 
         if status is None:
             print(f"[{ts()}] Could not read status, will retry...")
