@@ -16,6 +16,7 @@ See ``docs/agent_plan.md`` for the v1 design (alert state machine,
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
@@ -49,8 +50,12 @@ if "agent_chat_log" not in st.session_state:
     # render cleanly in st.chat_message.
     st.session_state.agent_chat_log: list[dict[str, Any]] = []  # type: ignore[attr-defined]
 
-if "pending_alert" not in st.session_state:
-    st.session_state.pending_alert = None  # {message, status, source_idx}
+if "alert_drafts" not in st.session_state:
+    # List of every alert draft the agent has produced this session, so prior
+    # previews remain auditable after they're superseded/sent/dropped.
+    # Each entry: {message, status, source_idx, drafted_at}
+    # status ∈ {"pending", "sent", "superseded", "dropped"}
+    st.session_state.alert_drafts: list[dict[str, Any]] = []  # type: ignore[attr-defined]
 
 if "agent_instance" not in st.session_state:
     st.session_state.agent_instance = None
@@ -76,7 +81,7 @@ with st.sidebar:
     if st.button("\U0001f5d1 Clear conversation", use_container_width=True):
         st.session_state.agent_messages = []
         st.session_state.agent_chat_log = []
-        st.session_state.pending_alert = None
+        st.session_state.alert_drafts = []
         st.rerun()
 
     st.markdown("---")
@@ -177,35 +182,40 @@ for idx, entry in enumerate(st.session_state.agent_chat_log):
 
         # Alert-confirm UI is rendered inline in the assistant turn that
         # produced the preview, so the "Approve & send" button lives next
-        # to the draft it would deliver.
-        pending = st.session_state.pending_alert
-        if (
-            role == "assistant"
-            and pending is not None
-            and pending.get("status") == "pending"
-            and pending.get("source_idx") == idx
-        ):
-            st.markdown("**Alert preview:**")
-            st.code(pending["message"])
-            col_ok, col_no = st.columns([1, 4])
-            if col_ok.button("✅ Approve & send", key=f"approve_{idx}"):
-                agent = _get_agent()
-                resp = agent.post_alert(pending["message"])
-                if resp.get("ok"):
-                    st.session_state.pending_alert = {**pending, "status": "sent"}
-                    st.toast("Alert delivered", icon="✅")
-                    # Inject a synthetic user message so the agent can
-                    # reference the send on subsequent turns.
-                    st.session_state.agent_messages.append(
-                        {"role": "user",
-                         "content": f"[System: alert sent OK ({resp.get('status', 'sent')})]"}
-                    )
-                else:
-                    st.error(f"Alert send failed: {resp.get('status')}")
-                st.rerun()
-            if col_no.button("Discard preview", key=f"discard_{idx}"):
-                st.session_state.pending_alert = {**pending, "status": "dropped"}
-                st.rerun()
+        # to the draft it would deliver. Multiple drafts can attach to
+        # different assistant turns; the renderer walks all of them and
+        # picks the one whose source_idx matches.
+        if role == "assistant":
+            for d_idx, draft in enumerate(st.session_state.alert_drafts):
+                if draft.get("source_idx") != idx:
+                    continue
+                status = draft.get("status", "pending")
+                st.markdown("**Alert preview:**")
+                st.code(draft["message"])
+                if status == "pending":
+                    col_ok, col_no = st.columns([1, 4])
+                    if col_ok.button("✅ Approve & send", key=f"approve_{idx}_{d_idx}"):
+                        agent = _get_agent()
+                        resp = agent.post_alert(draft["message"])
+                        if resp.get("ok"):
+                            st.session_state.alert_drafts[d_idx] = {**draft, "status": "sent"}
+                            st.toast("Alert delivered", icon="✅")
+                            st.session_state.agent_messages.append(
+                                {"role": "user",
+                                 "content": f"[System: alert sent OK ({resp.get('status', 'sent')})]"}
+                            )
+                        else:
+                            st.error(f"Alert send failed: {resp.get('status')}")
+                        st.rerun()
+                    if col_no.button("Discard preview", key=f"discard_{idx}_{d_idx}"):
+                        st.session_state.alert_drafts[d_idx] = {**draft, "status": "dropped"}
+                        st.rerun()
+                elif status == "superseded":
+                    st.caption("↪ Superseded by a later draft.")
+                elif status == "sent":
+                    st.caption("✅ Sent.")
+                elif status == "dropped":
+                    st.caption("✗ Discarded.")
 
 
 # ─── Input handling ────────────────────────────────────────────────────────
@@ -213,10 +223,11 @@ for idx, entry in enumerate(st.session_state.agent_chat_log):
 
 def _submit_user_turn(user_text: str) -> None:
     """Run the agent and append the result to both message logs."""
-    # If a draft was pending, mark it dropped — analyst moved on.
-    pending = st.session_state.pending_alert
-    if pending is not None and pending.get("status") == "pending":
-        st.session_state.pending_alert = {**pending, "status": "dropped"}
+    # If a draft was pending, the analyst moved on without acting on it —
+    # mark it dropped so the audit trail reflects that.
+    for d_idx, draft in enumerate(st.session_state.alert_drafts):
+        if draft.get("status") == "pending":
+            st.session_state.alert_drafts[d_idx] = {**draft, "status": "dropped"}
 
     agent = _get_agent()
     st.session_state.agent_chat_log.append(
@@ -245,11 +256,18 @@ def _submit_user_turn(user_text: str) -> None:
     )
 
     if result.pending_alert_preview:
-        st.session_state.pending_alert = {
+        # If any prior draft is still pending (analyst hadn't acted on it
+        # yet but the agent produced a new one), flip it to superseded so
+        # the audit trail shows the replacement explicitly.
+        for d_idx, draft in enumerate(st.session_state.alert_drafts):
+            if draft.get("status") == "pending":
+                st.session_state.alert_drafts[d_idx] = {**draft, "status": "superseded"}
+        st.session_state.alert_drafts.append({
             "message": result.pending_alert_preview,
             "status": "pending",
             "source_idx": assistant_idx,
-        }
+            "drafted_at": datetime.now(UTC).isoformat(),
+        })
 
 
 def _trace_to_dict(trace) -> dict[str, Any]:
