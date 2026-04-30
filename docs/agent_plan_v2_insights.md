@@ -14,7 +14,7 @@
 |---|---|---|---|
 | A | Foundations: `semantic_model.yaml`, `semantic_loader.py`, `events.py`, `truncation.py` | done | (this commit) |
 | B | New tools: `helpers.py` (4 helpers), `describe_schema`, `sample_table`, hardened `run_custom_query`; registry+schemas wired | done | (this commit) |
-| C | Agent loop rewrite: async generator, circuit breaker, observation compaction, prompt caching, timeouts | not started | — |
+| C | Agent loop rewrite: async generator, circuit breaker, observation compaction, prompt caching, timeouts | done (added as `AgentV2` alongside v1 `Agent`; Phase D switches the page) | (this commit) |
 | D | UI: `5_Agent.py` consumes async generator, `st.status` per tool, `_render` hints, streamed text | not started | — |
 | E | Tests: truncation, circuit breaker, helper whitelists, `run_custom_query` LIMIT-21 + count_total + error sanitization | not started | — |
 
