@@ -1,44 +1,22 @@
-# Conversational Agent — v2: Insight-Drawing Extension
+# Conversational SOC Agent — Reference
 
-> Saved 2026-04-29. Extends `docs/agent_plan.md` (v1).
-> v2 is **purely additive** to v1 — no rework, no breaking changes.
-> Read v1 first; this doc only describes deltas.
+> Design + implementation reference for the SAP Security conversational
+> agent (`src/agent/`, `src/dashboard/pages/5_Agent.py`).
+> Last updated 2026-04-30. Supersedes the prior `docs/agent_plan.md`
+> (v1) and `docs/agent_plan_v2_insights.md` (v2 insights). The historical
+> v1 doc was deleted when v1 was retired; see git history if needed.
 
-## Implementation progress tracker
+## What it is
 
-> Updated as each phase commits. Use this to resume if a session is
-> interrupted. "Status" reflects what's actually merged on
-> `feat/conversational-agent`, not what's been designed.
+The agent lets an analyst compose ad-hoc security analysis from a
+semantic model + a curated tool surface — in the spirit of Snowflake
+Cortex Analyst / Snowflake Intelligence — but without arbitrary Python
+execution and without giving up safety rails. The model has read-only
+access to live HANA (SECURITY_LOGS, ANOMALIES, MODEL_VERSIONS) and the
+SAP SOC API, plus an analyst-approved alert path.
 
-| Phase | Scope | Status | Commit |
-|---|---|---|---|
-| A | Foundations: `semantic_model.yaml`, `semantic_loader.py`, `events.py`, `truncation.py` | done | (this commit) |
-| B | New tools: `helpers.py` (4 helpers), `describe_schema`, `sample_table`, hardened `run_custom_query`; registry+schemas wired | done | (this commit) |
-| C | Agent loop rewrite: async generator, circuit breaker, observation compaction, prompt caching, timeouts | done (added as `AgentV2` alongside v1 `Agent`; Phase D switches the page) | (this commit) |
-| D | UI: `5_Agent.py` consumes async generator, `st.status` per tool, `_render` hints, streamed text | not started | — |
-| E | Tests: truncation, circuit breaker, helper whitelists, `run_custom_query` LIMIT-21 + count_total + error sanitization | not started | — |
-
-**Resume checklist after a fresh session:**
-1. `git log --oneline feat/conversational-agent ^dev` to see what's already in.
-2. Cross-check against the table above — fix any drift.
-3. Pick up from the first row whose status is `not started` or `in progress`.
-4. Each phase ends with a commit; the user reviews before the next phase starts.
-
-## Why v2 exists
-v1 answers a closed set of canned questions. v2 lets the agent *compose
-its own analysis* from a semantic model + a small set of analytical
-helpers, in the spirit of Snowflake Cortex Analyst / Snowflake
-Intelligence — but without arbitrary Python execution and without
-giving up our safety rails.
-
-> **Note on `run_custom_query`:** this tool is **introduced in v2**, not
-> v1. v1's plan deferred it here because it has no v1 acceptance-test
-> use case and would be throwaway work without the semantic model
-> (§3) that gives the LLM the schema knowledge to write good SQL.
-
-The five architectural requirements driving v2 are spelled out in
-sections §1–§5 below. They are non-negotiable; the rest of the design is
-shaped around them.
+The five architectural pillars (§1–§5) are non-negotiable; the rest of
+the design is shaped around them.
 
 ---
 

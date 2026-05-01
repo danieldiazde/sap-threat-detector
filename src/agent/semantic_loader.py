@@ -12,7 +12,7 @@ Loads ``src/agent/semantic_model.yaml`` once at import and exposes:
   validation.
 
 The bare DDL block and the rich payload are derived from the same file —
-single source of truth, per ``docs/agent_plan_v2_insights.md`` §3.
+single source of truth, per ``docs/CONVERSATIONAL_AGENT.md`` §3.
 """
 
 from __future__ import annotations

@@ -38,6 +38,9 @@ class AgentEvent:
     human_label: str | None = None
     args: dict[str, Any] | None = None
     summary: dict[str, Any] | None = None
+    # Full post-truncation tool result, attached to tool_finished/tool_failed
+    # so the UI can render rows/charts (summary alone is too lossy).
+    result: dict[str, Any] | None = None
     error: str | None = None
     retry_n: int | None = None
     # Text streaming:
@@ -58,13 +61,18 @@ class AgentEvent:
 
     @classmethod
     def tool_finished(
-        cls, tool_name: str, summary: dict[str, Any], human_label: str
+        cls,
+        tool_name: str,
+        summary: dict[str, Any],
+        human_label: str,
+        result: dict[str, Any] | None = None,
     ) -> AgentEvent:
         return cls(
             kind="tool_finished",
             tool_name=tool_name,
             human_label=human_label,
             summary=dict(summary or {}),
+            result=dict(result) if result is not None else None,
         )
 
     @classmethod
@@ -74,6 +82,7 @@ class AgentEvent:
         error: str,
         retry_n: int,
         human_label: str,
+        result: dict[str, Any] | None = None,
     ) -> AgentEvent:
         return cls(
             kind="tool_failed",
@@ -81,6 +90,7 @@ class AgentEvent:
             human_label=human_label,
             error=error,
             retry_n=retry_n,
+            result=dict(result) if result is not None else None,
         )
 
     @classmethod

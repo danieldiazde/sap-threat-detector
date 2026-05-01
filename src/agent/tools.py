@@ -1,12 +1,13 @@
 """
 tools.py
 --------
-Implementation of the v1 conversational agent's tool surface.
+Implementation of the conversational agent's tool surface.
 
 Every tool is an ``async`` function that returns a JSON-serialisable
 dict. ``TOOL_REGISTRY`` maps the tool name (as the LLM sees it) to the
-callable; the FastAPI ``/agent/tool`` dispatcher in
-``src/api/agent_routes.py`` is the only caller in v1.
+callable. ``Agent._run_one_tool`` calls ``dispatch`` directly in-process;
+``src/api/agent_routes.py`` exposes the same dispatcher via HTTP for
+external callers.
 
 Tools degrade gracefully — on any failure they return
 ``{"error": "<message>", "_render": "raw"}`` rather than raising. The
@@ -14,12 +15,11 @@ agent loop then has the option to retry or surface the error to the
 user.
 
 Each return value carries a ``_render`` hint
-(``"scalar" | "table" | "raw"``) so the Streamlit page can pick the
-right widget without inferring from the tool name. v2 will add
-``"line_chart"`` and ``"bar_chart"``.
+(``"scalar" | "table" | "bar_chart" | "line_chart" | "raw"``) so the
+Streamlit page can pick the right widget without inferring from the
+tool name.
 
-See ``docs/agent_plan.md`` for the full tool list and ``docs/agent_plan_v2_insights.md``
-for the v2 helpers that will land alongside this module.
+See ``docs/CONVERSATIONAL_AGENT.md`` for the full design.
 """
 
 from __future__ import annotations

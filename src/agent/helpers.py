@@ -1,7 +1,7 @@
 """
 helpers.py
 ----------
-v2 analytical helpers (`docs/agent_plan_v2_insights.md` §6).
+Analytical helpers (`docs/CONVERSATIONAL_AGENT.md` §6).
 
 Each helper is a parameterized SQL template whose only inputs are
 whitelisted enum values (metric / dimension / bucket / top_n) plus an
