@@ -152,9 +152,9 @@ infra/          CF manifest
 
 The `SECURITY_LOGS` table was expanded in commit `5b5d777` (2026-04-21) from
 6 columns to 22. Rows ingested before that commit have NULLs in the 16 new
-columns. The training pipeline currently fills NaN with 0 (see the
-`# TODO(schema-audit)` comment in `src/model/features.py::feature_matrix`),
-which silently biases pre-expansion rows toward "zero-diversity" profiles.
+columns. The training pipeline currently fills NaN with 0 (the final
+`.fillna(0)` in `src/model/features.py::feature_matrix`), which silently
+biases pre-expansion rows toward "zero-diversity" profiles.
 
 **Before making any change that depends on `FEATURE_COLUMNS` or the feature
 matrix, read the latest `data/reports/schema_audit_<date>.md`** (generated

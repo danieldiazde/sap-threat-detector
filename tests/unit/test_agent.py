@@ -1,8 +1,10 @@
-"""Unit tests for the v1 conversational-agent surface.
+"""Unit tests for the agent tool surface and supporting infrastructure.
 
-Covers:
+Covers the surfaces still in use after the v1 orchestrator was retired
+(the v2 orchestrator and its tests live alongside in ``tests/unit/agent/``):
+
 - ``post_alert_message`` length validation (empty / >300 / valid in mock mode)
-- new repository read methods in mock mode (count_since, top_source_ips,
+- repository read methods in mock mode (count_since, top_source_ips,
   query_anomalies, mttd_percentiles, model_version.latest)
 - ``src/agent/tools.py`` dispatch contract (registry/schema parity,
   unknown-tool envelope, bad-args envelope)
