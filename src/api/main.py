@@ -26,6 +26,7 @@ from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, status
+from src.api.agent_routes import router as agent_router
 from src.api.schemas import (
     AnomaliesResponse,
     AnomalyRecord,
@@ -229,6 +230,7 @@ app = FastAPI(
     docs_url="/docs",
     lifespan=lifespan,
 )
+app.include_router(agent_router)
 
 
 # ─── Endpoints ─────────────────────────────────────────────────────────────

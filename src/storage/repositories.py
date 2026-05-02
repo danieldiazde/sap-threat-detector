@@ -133,6 +133,33 @@ class LogRepository:
                 return []
             return await asyncio.to_thread(self._query_recent_sync, conn, limit)
 
+    async def count_since(self, hours: int) -> int:
+        """Count logs ingested in the last *hours* hours."""
+        if settings.mock_hana:
+            cutoff = utcnow().timestamp() - hours * 3600
+            return sum(
+                1 for r in self._memory
+                if r.get("ingested_at") and _timestamp_of(r["ingested_at"]) >= cutoff
+            )
+        async with self._pool.acquire() as conn:
+            if conn is None:
+                return 0
+            return await asyncio.to_thread(self._count_since_sync, conn, hours)
+
+    @staticmethod
+    def _count_since_sync(conn: Any, hours: int) -> int:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) FROM SECURITY_LOGS "
+                "WHERE INGESTED_AT >= ADD_SECONDS(CURRENT_TIMESTAMP, ?)",
+                (-(hours * 3600),),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+        finally:
+            cursor.close()
+
     # ── Internal sync helpers (run in executor) ──────────────────────
 
     @staticmethod
@@ -404,6 +431,189 @@ class AnomalyRepository:
         finally:
             cursor.close()
 
+    # ── Agent-facing read methods (added 2026-04-29) ─────────────────────
+    # These power src/agent/tools.py via the /agent/tool dispatcher.
+
+    async def count_since(self, hours: int) -> int:
+        """Count anomalies detected in the last *hours* hours."""
+        if settings.mock_hana:
+            cutoff = utcnow().timestamp() - hours * 3600
+            return sum(
+                1 for r in self._memory
+                if r.get("detected_at") and _timestamp_of(r["detected_at"]) >= cutoff
+            )
+        async with self._pool.acquire() as conn:
+            if conn is None:
+                return 0
+            return await asyncio.to_thread(self._count_since_sync, conn, hours)
+
+    async def top_source_ips(
+        self, hours: int = 1, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Top source IPs by anomaly count in the last *hours*.
+
+        Returns ``[{source_ip, count, min_score}]`` sorted by count desc.
+        ``min_score`` is the most-negative ANOMALY_SCORE seen for that IP —
+        isolation-forest scores are negative and lower means more
+        anomalous, so this is "the worst score we saw from this IP".
+        """
+        if settings.mock_hana:
+            cutoff = utcnow().timestamp() - hours * 3600
+            agg: dict[str, dict[str, Any]] = {}
+            for r in self._memory:
+                if not r.get("source_ip"):
+                    continue
+                if not r.get("detected_at"):
+                    continue
+                if _timestamp_of(r["detected_at"]) < cutoff:
+                    continue
+                ip = r["source_ip"]
+                bucket = agg.setdefault(
+                    ip, {"source_ip": ip, "count": 0, "min_score": None}
+                )
+                bucket["count"] += 1
+                score = _to_float_or_none(r.get("anomaly_score"))
+                if score is not None and (
+                    bucket["min_score"] is None or score < bucket["min_score"]
+                ):
+                    bucket["min_score"] = score
+            ranked = sorted(agg.values(), key=lambda b: b["count"], reverse=True)
+            return ranked[:limit]
+        async with self._pool.acquire() as conn:
+            if conn is None:
+                return []
+            return await asyncio.to_thread(
+                self._top_source_ips_sync, conn, hours, limit
+            )
+
+    @staticmethod
+    def _top_source_ips_sync(
+        conn: Any, hours: int, limit: int
+    ) -> list[dict[str, Any]]:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                f"""
+                SELECT TOP {int(limit)} SOURCE_IP, COUNT(*) AS CNT,
+                       MIN(ANOMALY_SCORE) AS MIN_SCORE
+                FROM ANOMALIES
+                WHERE DETECTED_AT >= ADD_SECONDS(CURRENT_TIMESTAMP, ?)
+                  AND SOURCE_IP IS NOT NULL
+                GROUP BY SOURCE_IP
+                ORDER BY CNT DESC
+                """,
+                (-(hours * 3600),),
+            )
+            return [
+                {
+                    "source_ip": row[0],
+                    "count": int(row[1]),
+                    "min_score": float(row[2]) if row[2] is not None else None,
+                }
+                for row in cursor.fetchall()
+            ]
+        finally:
+            cursor.close()
+
+    async def query_anomalies(
+        self,
+        limit: int = 20,
+        threat_level: str | None = None,
+        hours: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Filtered anomaly query for the agent.
+
+        Distinct from :meth:`recent_anomalies` (which has no filters and is
+        used by the dashboard) so existing callers stay untouched.
+        """
+        threat = (threat_level or "").upper().strip() or None
+        if threat is not None and threat not in {"HIGH", "MEDIUM", "LOW"}:
+            return []  # silent reject; the schema in the system prompt names the valid values
+
+        if settings.mock_hana:
+            cutoff = (
+                utcnow().timestamp() - hours * 3600 if hours is not None else None
+            )
+            rows = []
+            for r in reversed(self._memory):  # newest first
+                if threat and (r.get("threat_level") or "").upper() != threat:
+                    continue
+                if cutoff is not None:
+                    if not r.get("detected_at"):
+                        continue
+                    if _timestamp_of(r["detected_at"]) < cutoff:
+                        continue
+                rows.append(r)
+                if len(rows) >= limit:
+                    break
+            return rows
+
+        async with self._pool.acquire() as conn:
+            if conn is None:
+                return []
+            return await asyncio.to_thread(
+                self._query_anomalies_sync, conn, limit, threat, hours
+            )
+
+    @staticmethod
+    def _query_anomalies_sync(
+        conn: Any, limit: int, threat: str | None, hours: int | None
+    ) -> list[dict[str, Any]]:
+        cursor = conn.cursor()
+        try:
+            clauses: list[str] = []
+            params: list[Any] = []
+            if threat:
+                clauses.append("THREAT_LEVEL = ?")
+                params.append(threat)
+            if hours is not None:
+                clauses.append("DETECTED_AT >= ADD_SECONDS(CURRENT_TIMESTAMP, ?)")
+                params.append(-(hours * 3600))
+            where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+            cursor.execute(
+                f"""
+                SELECT TOP {int(limit)} DETECTED_AT, SOURCE_IP, THREAT_LEVEL,
+                       ANOMALY_SCORE, TOTAL_REQUESTS, ERROR_RATE,
+                       PIPELINE_MTTD_MS, E2E_MTTD_MS, WEBHOOK_SENT,
+                       INCIDENT_REPORT_PATH, DETECTOR
+                FROM ANOMALIES
+                {where}
+                ORDER BY DETECTED_AT DESC
+                """,
+                params,
+            )
+            cols = [d[0].lower() for d in cursor.description]
+            return [dict(zip(cols, row, strict=False)) for row in cursor.fetchall()]
+        finally:
+            cursor.close()
+
+    async def mttd_percentiles(self, hours: int = 24) -> dict[str, Any]:
+        """Return ``{p50_ms, p95_ms, sample_count}`` over the last *hours*.
+
+        HANA's ``PERCENTILE_CONT`` is a window function (per-row output),
+        not a scalar aggregate, so computing p50/p95 server-side requires
+        either subquery + DISTINCT gymnastics or moving the math into
+        Python. We reuse :meth:`mttd_samples` (already bounded by the
+        time window) and compute in Python — same code path as mock
+        mode, no dialect surprises.
+        """
+        samples = await self.mttd_samples(window_minutes=hours * 60)
+        return _percentiles(samples)
+
+    @staticmethod
+    def _count_since_sync(conn: Any, hours: int) -> int:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) FROM ANOMALIES "
+                "WHERE DETECTED_AT >= ADD_SECONDS(CURRENT_TIMESTAMP, ?)",
+                (-(hours * 3600),),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+        finally:
+            cursor.close()
+
 
 class ModelVersionRepository:
     """Persist trained model metadata."""
@@ -426,6 +636,37 @@ class ModelVersionRepository:
             if conn is None:
                 return
             await asyncio.to_thread(self._register_sync, conn, manifest)
+
+    async def latest(self) -> dict[str, Any] | None:
+        """Return the most recently registered model version, or None."""
+        if settings.mock_hana:
+            return dict(self._memory[-1]) if self._memory else None
+
+        async with self._pool.acquire() as conn:
+            if conn is None:
+                return None
+            return await asyncio.to_thread(self._latest_sync, conn)
+
+    @staticmethod
+    def _latest_sync(conn: Any) -> dict[str, Any] | None:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                SELECT TOP 1 VERSION_TAG, MODEL_TYPE, TRAINED_AT, CONTAMINATION,
+                             TRAINING_SAMPLES, FEATURE_COLUMNS, HYPERPARAMS,
+                             CV_SCORES, IS_ACTIVE, NOTES
+                FROM MODEL_VERSIONS
+                ORDER BY TRAINED_AT DESC
+                """,
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            cols = [d[0].lower() for d in cursor.description]
+            return dict(zip(cols, row, strict=False))
+        finally:
+            cursor.close()
 
     @staticmethod
     def _register_sync(conn: Any, manifest: dict[str, Any]) -> None:
@@ -469,6 +710,24 @@ def _timestamp_of(dt: Any) -> float:
         return pd.Timestamp(dt).timestamp()
     except (ValueError, TypeError):
         return 0.0
+
+
+def _percentiles(samples: list[int]) -> dict[str, Any]:
+    """Compute p50/p95 from a list of ints; mock-mode helper."""
+    if not samples:
+        return {"p50_ms": None, "p95_ms": None, "sample_count": 0}
+    s = sorted(samples)
+    n = len(s)
+
+    def _p(q: float) -> int:
+        # Linear interpolation between the two nearest ranks.
+        idx = q * (n - 1)
+        lo = int(idx)
+        hi = min(lo + 1, n - 1)
+        frac = idx - lo
+        return int(round(s[lo] * (1 - frac) + s[hi] * frac))
+
+    return {"p50_ms": _p(0.5), "p95_ms": _p(0.95), "sample_count": n}
 
 
 # Module-level singletons used by the pipeline + API.

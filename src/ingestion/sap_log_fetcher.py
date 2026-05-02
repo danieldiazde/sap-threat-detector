@@ -96,6 +96,30 @@ async def fetch_logs(page: int = 1) -> pd.DataFrame:
     return _stamp_ingested_at(df)
 
 
+async def fetch_info() -> dict[str, object]:
+    """
+    Fetch ``/info`` for the current SAP window.
+
+    Returns the parsed JSON dict, or ``{}`` when the API is unreachable
+    (spec status 503 = "data not loaded yet"). Mock mode returns ``{}``.
+
+    Used by :func:`fetch_all_logs` to drive the page loop and by the
+    conversational agent's ``get_current_window_info`` tool.
+    """
+    if settings.mock_api:
+        return {}
+    headers = {"Authorization": f"Bearer {settings.sap_api_key}"}
+    info = await _get_with_retry(
+        url=f"{settings.sap_api_url}/info",
+        headers=headers,
+        params={},
+        non_fatal_statuses=(503,),
+    )
+    if not isinstance(info, dict):
+        return {}
+    return info
+
+
 async def fetch_all_logs() -> pd.DataFrame:
     """
     Fetch every page of logs for the current 30-minute window.
@@ -119,13 +143,8 @@ async def fetch_all_logs() -> pd.DataFrame:
     headers = {"Authorization": f"Bearer {settings.sap_api_key}"}
 
     # Step 1: /info — also tells us if the window rolled.
-    info = await _get_with_retry(
-        url=f"{settings.sap_api_url}/info",
-        headers=headers,
-        params={},
-        non_fatal_statuses=(503,),
-    )
-    if not isinstance(info, dict):
+    info = await fetch_info()
+    if not info:
         logger.info("fetcher.info_unavailable")
         return pd.DataFrame()
 
