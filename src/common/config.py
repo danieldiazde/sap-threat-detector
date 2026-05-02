@@ -49,6 +49,8 @@ DEFAULT_MTTD_HIGH_THRESHOLD_MS: Final[int] = 5000
 DEFAULT_MODEL_TYPE: Final[str] = "isolation_forest"
 DEFAULT_MODEL_VERSION: Final[str] = "latest"
 DEFAULT_TEAM_ID: Final[str] = "team-tec"
+DEFAULT_AGENT_MODEL: Final[str] = "claude-sonnet-4-6"
+DEFAULT_AGENT_MAX_ITERATIONS: Final[int] = 5
 
 
 def _env_str(key: str, default: str = "") -> str:
@@ -122,6 +124,11 @@ class Settings:
     dashboard_refresh_seconds: int
     api_base_url: str
     mttd_high_threshold_ms: int
+
+    # --- Conversational agent (Streamlit page 5_Agent.py) ---
+    anthropic_api_key: str
+    agent_model: str
+    agent_max_iterations: int
 
     # --- Paths ---
     project_root: Path = field(default_factory=lambda: Path(__file__).resolve().parents[2])
@@ -206,6 +213,11 @@ class Settings:
             api_base_url=_env_str("API_BASE_URL", DEFAULT_API_BASE_URL),
             mttd_high_threshold_ms=_env_int(
                 "MTTD_HIGH_THRESHOLD_MS", DEFAULT_MTTD_HIGH_THRESHOLD_MS
+            ),
+            anthropic_api_key=_env_str("ANTHROPIC_API_KEY"),
+            agent_model=_env_str("AGENT_MODEL", DEFAULT_AGENT_MODEL),
+            agent_max_iterations=_env_int(
+                "AGENT_MAX_ITERATIONS", DEFAULT_AGENT_MAX_ITERATIONS
             ),
             incident_report_dir=Path(
                 _env_str("INCIDENT_REPORT_DIR", "reports/incidents")
