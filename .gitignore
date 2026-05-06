@@ -51,10 +51,6 @@ reports/
 data/raw/
 *.log
 *.csv
-# Re-include the mock sample (negation must follow *.csv)
-!data/
-!data/samples/
-!data/samples/sample_logs.csv
 
 # ===========================
 # SAP BTP / Cloud Foundry

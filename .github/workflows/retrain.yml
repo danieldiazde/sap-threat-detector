@@ -27,7 +27,7 @@ jobs:
       - name: Run daily retrain task
         run: |
           cf run-task sap-threat-detector \
-            --command 'python -m scripts.train_model' \
+            --command 'python -m scripts.fetch_real_logs && python -m scripts.train_model' \
             --name daily-retrain
 
       - name: Wait for task completion and check status
