@@ -23,6 +23,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from src.common.config import settings
@@ -32,6 +33,43 @@ from src.model.train import train_split
 from src.storage.repositories import model_version_repository
 
 logger = get_logger(__name__)
+
+_HANA_WINDOW_DAYS: int = 30
+
+
+def _query_hana_logs_sync(conn: Any) -> pd.DataFrame:
+    offset_seconds = -(_HANA_WINDOW_DAYS * 24 * 60 * 60)
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT DATETIME, SOURCE_IP, PORT_SERVICE, EVENT_DESCRIPTION,
+                   STATUS, LOG_TYPE, REQUEST_PATH, SAP_APPLICATION,
+                   REGION_CODE, MACRO_REGION, HTTP_METHOD,
+                   SAP_SOURCE_TYPE, SAP_APP_ENV,
+                   LLM_TOTAL_TOKENS, LLM_COST_USD, LLM_FINISH_REASON,
+                   LLM_STATUS, LLM_RESPONSE_TIME_MS, LLM_PROMPT_CATEGORY,
+                   LLM_ERROR_MESSAGE, LLM_MODEL_ID, LLM_PROMPT_TOKENS
+            FROM SECURITY_LOGS
+            WHERE INGESTED_AT >= ADD_SECONDS(CURRENT_TIMESTAMP, ?)
+            ORDER BY DATETIME ASC
+            """,
+            (offset_seconds,),
+        )
+        cols = [d[0].lower() for d in cursor.description]
+        return pd.DataFrame(cursor.fetchall(), columns=cols)
+    finally:
+        cursor.close()
+
+
+async def _load_from_hana() -> pd.DataFrame:
+    from src.storage.pool import pool
+
+    await pool.initialize()
+    async with pool.acquire() as conn:
+        if conn is None:
+            raise RuntimeError("HANA pool returned no connection — verify HANA_HOST is set")
+        return await asyncio.to_thread(_query_hana_logs_sync, conn)
 
 
 def main() -> None:
@@ -50,17 +88,33 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    data_path = Path(args.data)
-    if not data_path.exists():
-        logger.error("train.data_not_found", extra={"path": str(data_path)})
-        print(f"Error: data file not found: {data_path}")
-        print("Run 'make mock' first to generate sample data.")
-        sys.exit(1)
+    # Load — source depends on environment
+    if settings.is_production:
+        print(f"ENVIRONMENT=production — querying HANA (last {_HANA_WINDOW_DAYS} days)...")
+        df = asyncio.run(_load_from_hana())
+        df = normalize_columns(df)
+        data_source = f"HANA (last {_HANA_WINDOW_DAYS} days)"
+    else:
+        data_path = Path(args.data)
+        if not data_path.exists():
+            logger.error("train.data_not_found", extra={"path": str(data_path)})
+            print(f"Error: data file not found: {data_path}")
+            print("Run 'make mock' first to generate sample data.")
+            sys.exit(1)
+        df = pd.read_parquet(data_path) if data_path.suffix == ".parquet" else pd.read_csv(data_path)
+        df = normalize_columns(df)
+        data_source = str(data_path)
 
-    # Load
-    df = pd.read_parquet(data_path) if data_path.suffix == ".parquet" else pd.read_csv(data_path)
-    df = normalize_columns(df)
-    print(f"Loaded {len(df)} log rows from {data_path}")
+    print(f"Loaded {len(df)} log rows from {data_source}")
+
+    if "datetime" in df.columns:
+        dt = pd.to_datetime(df["datetime"], errors="coerce")
+        print(f"Date range:       {dt.min()} to {dt.max()}")
+    if "source_ip" in df.columns:
+        top5 = df["source_ip"].value_counts().head(5)
+        print("Top 5 source_ip:")
+        for ip, count in top5.items():
+            print(f"  {ip}: {count}")
 
     # Train (train_split handles extract_features + legacy/modern split internally)
     model_type = args.model_type or settings.model_type
