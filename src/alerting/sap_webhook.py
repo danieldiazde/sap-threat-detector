@@ -387,14 +387,21 @@ async def _send_with_retry(
 
 
 async def _send_once(payload: dict[str, Any]) -> None:
-    headers = {
-        "Authorization": f"Bearer {settings.sap_api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = _auth_headers()
     url = f"{settings.sap_api_url}/alert"
     client = _get_client()
     response = await client.post(url, json=payload, headers=headers)
     response.raise_for_status()
+
+
+def _auth_headers() -> dict[str, str]:
+    # Keep malformed/missing SAP_API_KEY from producing httpx.LocalProtocolError;
+    # an empty token should become a server-side 401 and a clean failed alert.
+    headers = {"Content-Type": "application/json"}
+    token = settings.sap_api_key.strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def _mock_alert(anomaly_row: dict[str, Any], message: str) -> None:
