@@ -72,6 +72,7 @@ FEATURE_COLUMNS: Final[tuple[str, ...]] = (
     "port_diversity",
     "brute_force_score",
     "interarrival_std",
+    "interarrival_mean",
     "request_rate_zscore",
     "app_diversity",
     "region_diversity",
@@ -165,22 +166,34 @@ SUSPICIOUS_PATH_FRAGMENTS: Final[tuple[str, ...]] = (
 )
 
 # SQL injection keyword fragments (case-insensitive).
+# SAP logs report injection attempts via application-level descriptions rather
+# than raw payload echoes — match those instead of classic SQL syntax.
 SQL_INJECTION_KEYWORDS: Final[tuple[str, ...]] = (
+    # SAP-native security detection language (observed in real API data)
+    "anomalous query pattern",
+    "uncommon query parameter",
+    "injection attempt",
+    "injection detected",
+    # Classic payload echoes kept for non-SAP log sources or future API changes
     "UNION SELECT",
     "OR 1=1",
-    "' OR '",
-    "--",
-    "/*",
     "DROP TABLE",
-    "INFORMATION_SCHEMA",
 )
 
 # Brute-force indicator keywords in the event description (case-insensitive).
+# Extended with SAP-native phrasing observed in real API event_description values.
 BRUTE_FORCE_KEYWORDS: Final[tuple[str, ...]] = (
+    # Classic patterns
     "failed login",
     "brute force",
     "authentication attempt",
     "authentication failure",
+    # SAP-native phrasing (observed in real API data)
+    "authentication error",
+    "unauthorised access attempt",
+    "cross-tenant data access attempt",
+    "login outside typical hours",
+    "consecutive failed login",
 )
 
 # HTTP methods that modify or delete resources — used for is_destructive_ratio feature.
