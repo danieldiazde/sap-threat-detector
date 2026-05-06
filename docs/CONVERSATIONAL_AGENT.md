@@ -158,8 +158,8 @@ SCORE               DECIMAL(10,6)   -- isolation-forest score; lower = more anom
 THREAT_LEVEL        NVARCHAR(20)    -- HIGH | MEDIUM | LOW
 DETECTED_AT         TIMESTAMP
 DETECTOR            NVARCHAR(50)    -- 'isolation_forest' | 'llm' | ...
-PIPELINE_MTTD_MS    INT
-E2E_MTTD_MS         INT
+PIPELINE_MTTD_MS    BIGINT
+E2E_MTTD_MS         BIGINT
 EVIDENCE_JSON       NCLOB           -- JSON; use JSON_VALUE() to extract
 CREATED_AT          TIMESTAMP
 

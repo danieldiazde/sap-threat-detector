@@ -70,6 +70,36 @@ class TestPipelineRunOnce:
         assert result["logs"] == 2
 
     @pytest.mark.asyncio
+    async def test_run_once_retrain_zero_disables_retrain(self):
+        pipeline = Pipeline()
+        mock_logs = _make_mock_logs()
+
+        with (
+            patch("src.pipeline.fetch_all_logs", new_callable=AsyncMock, return_value=mock_logs),
+            patch("src.pipeline.log_repository") as mock_log_repo,
+            patch("src.pipeline.anomaly_repository") as mock_anomaly_repo,
+            patch("src.pipeline.send_alert", new_callable=AsyncMock, return_value=True),
+            patch("src.pipeline.settings") as mock_settings,
+            patch("src.pipeline.predict") as mock_predict,
+            patch("src.pipeline.anomalies_only") as mock_anomalies_only,
+        ):
+            mock_settings.retrain_every_n_cycles = 0
+            mock_log_repo.insert_logs = AsyncMock(return_value=len(mock_logs))
+            mock_anomaly_repo.insert_anomaly = AsyncMock()
+            scored = mock_logs.copy()
+            scored["is_anomaly"] = False
+            scored["pipeline_mttd_ms"] = 100
+            scored["anomaly_score"] = 0.1
+            scored["threat_level"] = "low"
+            mock_predict.return_value = scored
+            mock_anomalies_only.return_value = scored[scored["is_anomaly"]]
+
+            result = await pipeline.run_once()
+
+        assert result["status"] == "ok"
+        assert pipeline._retrain_task is None
+
+    @pytest.mark.asyncio
     async def test_run_once_stamps_mttd(self):
         """Pipeline must pass ingested_at to predict for MTTD calculation."""
         pipeline = Pipeline()
