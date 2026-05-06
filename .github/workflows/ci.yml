@@ -30,6 +30,9 @@ jobs:
       - name: Lint with ruff
         run: ruff check src/ tests/ scripts/
 
+      - name: Generate mock data
+        run: python -m scripts.generate_mock_logs --rows 5000 --attack-ratio 0.05 --with-spikes --with-brute-force
+
       - name: Run unit tests
         run: pytest tests/unit/ -v
 

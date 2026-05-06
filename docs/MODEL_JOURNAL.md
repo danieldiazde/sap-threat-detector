@@ -30,8 +30,8 @@ the entry and strike through — we want audit trail, not revisionism.
 | Algorithm | `sklearn.ensemble.IsolationForest` |
 | Hyperparameters | `n_estimators=200`, `max_samples="auto"`, `contamination=0.05`, `random_state=42` (all configurable via `MODEL_N_ESTIMATORS`, `MODEL_MAX_SAMPLES`, `MODEL_CONTAMINATION`, `MODEL_RANDOM_STATE`) |
 | Scaler | `StandardScaler` |
-| Feature count | 16 (see `src/model/schema.py::FEATURE_COLUMNS`) |
-| Features | `total_requests`, `error_rate`, `post_ratio`, `unique_paths`, `status_4xx_count`, `status_5xx_count`, `denied_ratio`, `suspicious_path_ratio`, `is_destructive_ratio`, `sql_injection_hits`, `brute_force_score`, `port_diversity`, `app_diversity`, `region_diversity`, `interarrival_std`, `request_rate_zscore` |
+| Feature count | 17 (see `src/model/schema.py::FEATURE_COLUMNS`) |
+| Features | `total_requests`, `error_rate`, `post_ratio`, `unique_paths`, `status_4xx_count`, `status_5xx_count`, `denied_ratio`, `suspicious_path_ratio`, `is_destructive_ratio`, `sql_injection_hits`, `brute_force_score`, `port_diversity`, `app_diversity`, `region_diversity`, `interarrival_std`, `interarrival_mean`, `request_rate_zscore` |
 | Grouping | One feature row per `source_ip` in the training window |
 | Evaluation | `anomaly_rate`, score distribution (`min`, `p10`, `median`, `p90`, `max`, `mean`, `std`), decile gap, 5-fold CV anomaly-rate stability (see `src/model/evaluate.py`) |
 | Known caveat | Rows predating commit `5b5d777` (2026-04-21) have NULLs in 16 columns. `src/model/features.py::feature_matrix` currently applies blanket `.fillna(0)`, silently biasing those rows toward "zero-diversity" profiles. See *Open questions* #1. |
@@ -42,6 +42,7 @@ the entry and strike through — we want audit trail, not revisionism.
 
 | # | Date | Hypothesis | Algorithm | Feature set | Dataset | Key metrics | Decision |
 |---|---|---|---|---|---|---|---|
+| 1 | 2026-05-06 | SAP-native keywords + `interarrival_mean` improve signal quality | IForest | 17 features — `20260506-230038-b61b7b` | 626 samples (`data/samples/sample_logs.csv`) | anomaly_rate=0.051, score∈[−0.114, 0.182], CV std=0.000 | **accepted** |
 | 0 | 2026-04-21 | *(baseline — pre-journal)* | IForest | 16-feature set | HANA `SECURITY_LOGS` at current state | see active baseline row above | **accepted** (incumbent) |
 
 Add one row per experiment. Keep the hypothesis column ≤ 15 words; use the
@@ -84,6 +85,16 @@ Template for a rejection entry:
 5. **Drift detection.** No concept-drift monitoring exists. Should we
    alert when the live anomaly rate diverges by > N σ from the training
    rate?
+6. ~~**SAP-native keyword coverage.** Were the brute-force and SQL-injection
+   patterns in `BRUTE_FORCE_KEYWORDS` / `SQL_INJECTION_KEYWORDS` aligned
+   with what the SAP API actually emits in `event_description`?~~
+   **Resolved 2026-05-06** — audited 5,789 real log rows: classic payload
+   echoes (`UNION SELECT`, `OR 1=1`, etc.) never appear in `event_description`;
+   brute-force events use SAP-native phrasing ("authentication error",
+   "unauthorised access attempt", "cross-tenant data access attempt");
+   SQLi-type events surface as "anomalous query pattern" / "uncommon query
+   parameter". Both keyword tuples updated in `src/model/schema.py`; model
+   retrained as `20260506-230038-b61b7b` (experiment #1).
 
 ---
 
