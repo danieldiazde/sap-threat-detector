@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pandas as pd
 from src.alerting.sap_webhook import (
     MESSAGE_MAX_CHARS,
+    _auth_headers,
     build_alert_id,
     format_alert_message,
 )
@@ -25,6 +27,13 @@ class TestAlertId:
         dt1 = datetime(2026, 4, 4, 14, 45, 0, tzinfo=UTC)
         dt2 = datetime(2026, 4, 4, 14, 45, 59, tzinfo=UTC)
         assert build_alert_id("10.0.0.1", "high", dt1) == build_alert_id("10.0.0.1", "high", dt2)
+
+
+class TestAuthHeaders:
+    def test_empty_api_key_omits_illegal_bearer_header(self):
+        with patch("src.alerting.sap_webhook.settings") as mock_settings:
+            mock_settings.sap_api_key = ""
+            assert _auth_headers() == {"Content-Type": "application/json"}
 
 
 class TestFormatAlertMessage:

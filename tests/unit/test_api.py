@@ -36,3 +36,19 @@ class TestMetricsEndpoint:
         data = response.json()
         assert "counters" in data
         assert "pipeline_mttd_ms" in data
+
+
+class TestAnomaliesEndpoint:
+    def test_negative_limit_is_clamped_before_repository_call(self):
+        from src.api.main import app
+
+        async def fake_recent_anomalies(limit: int):
+            assert limit == 1
+            return []
+
+        client = TestClient(app, raise_server_exceptions=False)
+        with patch("src.api.main.anomaly_repository.recent_anomalies", fake_recent_anomalies):
+            response = client.get("/anomalies?limit=-10")
+
+        assert response.status_code == 200
+        assert response.json()["total"] == 0
