@@ -36,9 +36,28 @@ jobs:
           cf set-env sap-threat-detector HANA_PORT "${{ secrets.HANA_PORT }}"
           cf set-env sap-threat-detector HANA_USER "${{ secrets.HANA_USER }}"
           cf set-env sap-threat-detector HANA_PASSWORD "${{ secrets.HANA_PASSWORD }}"
+          cf set-env sap-threat-detector SAP_WEBHOOK_URL "${{ secrets.SAP_WEBHOOK_URL }}"
+          cf set-env sap-threat-detector SAP_WEBHOOK_SECRET "${{ secrets.SAP_WEBHOOK_SECRET }}"
 
       - name: Start application
         run: cf start sap-threat-detector
+
+      - name: Smoke test /health endpoint
+        run: |
+          RESPONSE=$(curl -s -o /tmp/health.json -w "%{http_code}" \
+            https://sap-threat-detector.cfapps.us10-001.hana.ondemand.com/health)
+          if [ "$RESPONSE" != "200" ]; then
+            echo "Health check failed: HTTP $RESPONSE"
+            cat /tmp/health.json
+            exit 1
+          fi
+          STATUS=$(python3 -c "import sys,json; d=json.load(open('/tmp/health.json')); print(d.get('status',''))")
+          if [ "$STATUS" != "ok" ]; then
+            echo "Health check returned non-ok status: $STATUS"
+            cat /tmp/health.json
+            exit 1
+          fi
+          echo "Health check passed (HTTP 200, status=ok)"
 
       - name: Show app logs on failure
         if: failure()

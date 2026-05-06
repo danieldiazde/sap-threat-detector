@@ -1,0 +1,51 @@
+name: Daily Model Retrain
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Cloud Foundry CLI
+        run: |
+          curl -L "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v8" | tar -zx
+          sudo mv cf8 /usr/local/bin/cf
+
+      - name: Login to SAP BTP Cloud Foundry
+        run: |
+          cf login \
+            -a ${{ secrets.CF_API_ENDPOINT }} \
+            -u ${{ secrets.CF_USERNAME }} \
+            -p ${{ secrets.CF_PASSWORD }} \
+            -o ${{ secrets.CF_ORG }} \
+            -s ${{ secrets.CF_SPACE }}
+
+      - name: Run daily retrain task
+        run: |
+          cf run-task sap-threat-detector \
+            --command 'python -m scripts.train_model' \
+            --name daily-retrain
+
+      - name: Wait for task completion and check status
+        run: |
+          echo "Waiting for daily-retrain task to complete..."
+          for i in $(seq 1 20); do
+            STATUS=$(cf tasks sap-threat-detector | grep daily-retrain | awk '{print $3}' | head -1)
+            echo "Attempt $i/20 — task status: ${STATUS:-unknown}"
+            if [ "$STATUS" = "SUCCEEDED" ]; then
+              echo "Retrain task succeeded"
+              exit 0
+            elif [ "$STATUS" = "FAILED" ]; then
+              echo "Retrain task FAILED — dumping recent app logs"
+              cf logs sap-threat-detector --recent
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "Retrain task did not finish within 10 minutes — dumping recent app logs"
+          cf logs sap-threat-detector --recent
+          exit 1
