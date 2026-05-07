@@ -11,6 +11,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Download pip wheels to vendor/
+        run: |
+          pip download -r requirements.txt --dest vendor/ --only-binary :all:
+          # CF python_buildpack auto-detects vendor/ and uses
+          # --no-index --find-links=vendor/ so staging never contacts PyPI.
+
       - name: Install Cloud Foundry CLI
         run: |
           curl -L "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v8" | tar -zx
