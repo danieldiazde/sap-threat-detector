@@ -16,12 +16,11 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Vendor pip packages
+      - name: Download pip wheels to vendor/
         run: |
-          pip install -r requirements.txt --target vendor/
-          # Replace requirements.txt with a stub so the CF buildpack skips
-          # pip install entirely — packages are served from vendor/ via PYTHONPATH.
-          echo "# Pre-installed to vendor/ by CI — see requirements.txt in git" > requirements.txt
+          pip download -r requirements.txt --dest vendor/ --only-binary :all:
+          # CF python_buildpack auto-detects vendor/ and uses
+          # --no-index --find-links=vendor/ so staging never contacts PyPI.
 
       - name: Install Cloud Foundry CLI
         run: |
