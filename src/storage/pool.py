@@ -92,15 +92,40 @@ class HanaPool:
             await self._queue.put(conn)
 
     async def ping(self) -> bool:
-        """Return True if the pool can execute a trivial query."""
+        """Return True if a fresh connection can execute a trivial query.
+
+        Opens a brand-new TCP connection with a 10 s timeout so that a stale
+        pooled socket kept alive by HANA Cloud's proxy does not mask a paused
+        engine.  The connection is closed immediately and never returned to the
+        pool.
+        """
         if settings.mock_hana:
             return True
+
+        def _fresh_ping() -> None:
+            from hdbcli import dbapi
+
+            conn = dbapi.connect(
+                address=settings.hana_host,
+                port=settings.hana_port,
+                user=settings.hana_user,
+                password=settings.hana_password,
+                databaseName=settings.hana_database,
+                communicationTimeout=10000,
+            )
+            try:
+                cursor = conn.cursor()
+                try:
+                    cursor.execute("SELECT 1 FROM DUMMY")
+                    cursor.fetchall()
+                finally:
+                    cursor.close()
+            finally:
+                conn.close()
+
         try:
-            async with self.acquire() as conn:
-                if conn is None:
-                    return False
-                await asyncio.to_thread(self._ping_sync, conn)
-                return True
+            await asyncio.to_thread(_fresh_ping)
+            return True
         except Exception as exc:
             logger.warning("hana_pool.ping_failed", extra={"error": str(exc)})
             return False
