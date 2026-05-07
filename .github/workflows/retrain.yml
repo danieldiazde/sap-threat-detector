@@ -40,12 +40,14 @@ jobs:
               echo "Retrain task succeeded"
               exit 0
             elif [ "$STATUS" = "FAILED" ]; then
-              echo "Retrain task FAILED — dumping recent app logs"
-              cf logs sap-threat-detector --recent
+              echo "Retrain task FAILED"
               exit 1
             fi
             sleep 30
           done
-          echo "Retrain task did not finish within 10 minutes — dumping recent app logs"
-          cf logs sap-threat-detector --recent
+          echo "Retrain task did not finish within 10 minutes"
           exit 1
+
+      - name: Dump CF task logs
+        if: always()
+        run: cf logs sap-threat-detector --recent
