@@ -105,14 +105,18 @@ class HanaPool:
         def _fresh_ping() -> None:
             from hdbcli import dbapi
 
-            conn = dbapi.connect(
+            kwargs: dict = dict(
                 address=settings.hana_host,
                 port=settings.hana_port,
                 user=settings.hana_user,
                 password=settings.hana_password,
-                databaseName=settings.hana_database,
+                encrypt=True,
+                sslValidateCertificate=False,
                 communicationTimeout=10000,
             )
+            if settings.hana_database:
+                kwargs["databaseName"] = settings.hana_database
+            conn = dbapi.connect(**kwargs)
             try:
                 cursor = conn.cursor()
                 try:
@@ -136,13 +140,17 @@ class HanaPool:
     def _open_connection() -> Connection:  # type: ignore[valid-type]
         from hdbcli import dbapi
 
-        return dbapi.connect(
+        kwargs: dict = dict(
             address=settings.hana_host,
             port=settings.hana_port,
             user=settings.hana_user,
             password=settings.hana_password,
-            databaseName=settings.hana_database,
+            encrypt=True,
+            sslValidateCertificate=False,
         )
+        if settings.hana_database:
+            kwargs["databaseName"] = settings.hana_database
+        return dbapi.connect(**kwargs)
 
     @staticmethod
     def _ping_sync(conn: Any) -> None:
