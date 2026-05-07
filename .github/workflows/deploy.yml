@@ -11,6 +11,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Vendor pip packages
+        run: |
+          pip install -r requirements.txt --target vendor/
+          # Replace requirements.txt with a stub so the CF buildpack skips
+          # pip install entirely — packages are served from vendor/ via PYTHONPATH.
+          echo "# Pre-installed to vendor/ by CI — see requirements.txt in git" > requirements.txt
+
       - name: Install Cloud Foundry CLI
         run: |
           curl -L "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v8" | tar -zx
