@@ -231,6 +231,7 @@ def _ip_features(group: pd.DataFrame) -> pd.Series:
     )
 
     interarrival_std = _interarrival_std(group["datetime"])
+    interarrival_mean = _interarrival_mean(group["datetime"])
     brute_force_score = brute_hits / total if total else 0.0
 
     app_diversity = (
@@ -261,6 +262,7 @@ def _ip_features(group: pd.DataFrame) -> pd.Series:
             "port_diversity": port_diversity,
             "brute_force_score": brute_force_score,
             "interarrival_std": interarrival_std,
+            "interarrival_mean": interarrival_mean,
             "app_diversity": app_diversity,
             "region_diversity": region_diversity,
             "is_destructive_ratio": destructive_count / total if total else 0.0,
@@ -283,6 +285,23 @@ def _interarrival_std(times: pd.Series) -> float:
     if deltas.empty:
         return 0.0
     return float(deltas.std(ddof=0))
+
+
+def _interarrival_mean(times: pd.Series) -> float:
+    """
+    Return the mean request interarrival time in seconds.
+
+    Complements interarrival_std: a very low mean combined with a low std
+    signals rapid, metronomic bursts characteristic of automated scanning.
+    Returns 0 for fewer than two samples.
+    """
+    clean = times.dropna().sort_values()
+    if len(clean) < 2:
+        return 0.0
+    deltas = clean.diff().dropna().dt.total_seconds()
+    if deltas.empty:
+        return 0.0
+    return float(deltas.mean())
 
 
 # ─── Global / cross-IP features ────────────────────────────────────────────
