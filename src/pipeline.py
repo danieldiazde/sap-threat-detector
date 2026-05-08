@@ -160,7 +160,9 @@ class Pipeline:
 
             # Trigger background retrain every N cycles
             retrain_every = settings.retrain_every_n_cycles
-            if self._cycle_count % retrain_every == 0 and not self._retraining:
+            # Treat non-positive env values as "disabled" to avoid modulo-by-zero
+            # crashes from a copied or partially edited .env file.
+            if retrain_every > 0 and self._cycle_count % retrain_every == 0 and not self._retraining:
                 self._retrain_task = asyncio.create_task(self._retrain())
 
             summary = {

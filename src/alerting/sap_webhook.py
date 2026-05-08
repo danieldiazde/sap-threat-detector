@@ -73,6 +73,41 @@ async def close_client() -> None:
 # ─── Public API ────────────────────────────────────────────────────────────
 
 
+async def post_alert_message(message: str) -> dict[str, Any]:
+    """Send a pre-formatted free-form alert string.
+
+    Used by the conversational agent's submit_alert tool: the analyst
+    drafts WHAT/WHEN/WHY in chat, the page formats and validates, and
+    this helper posts ``{"message": ...}`` to ``/alert`` with the same
+    auth + retry policy as :func:`send_alert`.
+
+    No dedup is applied (the analyst is the sole gate). Returns:
+      ``{"ok": bool, "status": "sent"|"mock"|"too_long"|"failed", "message_len": int}``
+    """
+    msg = (message or "").strip()
+    msg_len = len(msg)
+    if msg_len == 0:
+        return {"ok": False, "status": "empty", "message_len": 0}
+    if msg_len > MESSAGE_MAX_CHARS:
+        return {"ok": False, "status": "too_long", "message_len": msg_len}
+
+    if settings.mock_webhook:
+        logger.info(
+            "webhook.mock_freeform",
+            extra={"alert_message": msg, "message_len": msg_len, "source": "agent"},
+        )
+        return {"ok": True, "status": "mock", "message_len": msg_len}
+
+    payload = {"message": msg}
+    log_ctx = {"source_ip": "agent", "threat_level": "agent_freeform"}
+    success = await _send_with_retry(payload, log_ctx)
+    return {
+        "ok": success,
+        "status": "sent" if success else "failed",
+        "message_len": msg_len,
+    }
+
+
 async def send_alert(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> bool:
     """
     Fire a threat alert for *anomaly_row*, suppressing duplicates.
@@ -352,14 +387,21 @@ async def _send_with_retry(
 
 
 async def _send_once(payload: dict[str, Any]) -> None:
-    headers = {
-        "Authorization": f"Bearer {settings.sap_api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = _auth_headers()
     url = f"{settings.sap_api_url}/alert"
     client = _get_client()
     response = await client.post(url, json=payload, headers=headers)
     response.raise_for_status()
+
+
+def _auth_headers() -> dict[str, str]:
+    # Keep malformed/missing SAP_API_KEY from producing httpx.LocalProtocolError;
+    # an empty token should become a server-side 401 and a clean failed alert.
+    headers = {"Content-Type": "application/json"}
+    token = settings.sap_api_key.strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def _mock_alert(anomaly_row: dict[str, Any], message: str) -> None:

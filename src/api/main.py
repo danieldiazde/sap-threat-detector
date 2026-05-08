@@ -26,6 +26,7 @@ from typing import Any
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, status
+from src.api.agent_routes import router as agent_router
 from src.api.schemas import (
     AnomaliesResponse,
     AnomalyRecord,
@@ -229,6 +230,7 @@ app = FastAPI(
     docs_url="/docs",
     lifespan=lifespan,
 )
+app.include_router(agent_router)
 
 
 # ─── Endpoints ─────────────────────────────────────────────────────────────
@@ -345,7 +347,8 @@ async def metrics_endpoint() -> dict[str, Any]:
 @app.get("/anomalies", response_model=AnomaliesResponse)
 async def anomalies_endpoint(limit: int = 50) -> AnomaliesResponse:
     """Return the most recent detected anomalies, newest first."""
-    limit = min(limit, 200)
+    # Clamp user input before it reaches HANA TOP; negative values are invalid SQL.
+    limit = max(1, min(int(limit), 200))
     rows = await anomaly_repository.recent_anomalies(limit=limit)
     records = [
         AnomalyRecord(
