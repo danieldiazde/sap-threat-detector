@@ -3,12 +3,8 @@ log_parser.py
 -------------
 Pure parsing / normalization / validation of raw SAP log payloads.
 
-Keeping this logic separate from ``sap_log_fetcher.py`` means the April 13
-schema adaptation is a one-function change. The async fetcher just calls
-``parse_raw_response(payload) -> DataFrame`` and every downstream module
-assumes the canonical schema from ``src/model/schema.py``.
-
-Owner: Data Architect & Backend Developer
+The async fetcher calls ``parse_raw_response(payload) -> DataFrame`` and every
+downstream module assumes the canonical schema from ``src/model/schema.py``.
 """
 
 from __future__ import annotations
@@ -26,9 +22,7 @@ logger = get_logger(__name__)
 
 # ─── Column aliases ────────────────────────────────────────────────────────
 #
-# Maps candidate SAP field names → our canonical names. Extend this map on
-# April 13 once we see the real API response. The normalization function
-# is case-insensitive.
+# Maps candidate SAP field names → our canonical names. Case-insensitive.
 _COLUMN_ALIASES: dict[str, str] = {
     # log_id — Elasticsearch/SAP API per-row primary key, used for dedup.
     "_id": "log_id",
@@ -83,8 +77,6 @@ def parse_raw_response(payload: Any) -> pd.DataFrame:
     The SAP API is expected to return either:
     - ``{"logs": [...]}`` (wrapped), or
     - ``[...]`` (bare array of log objects).
-
-    After April 13 this may need tweaking — adapt inside this function.
     """
     if payload is None:
         return pd.DataFrame()

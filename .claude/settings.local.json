@@ -97,7 +97,15 @@
       "Bash(cf target *)",
       "Bash(cf orgs *)",
       "Bash(mv \"/home/daniel-diaz-de-leon/code/sap-threat-detector/.claude/projects/-home-daniel-diaz-de-leon-code-sap-threat-detector/memory/project_llm_integration_pr.md\" \"/home/daniel-diaz-de-leon/.claude/projects/-home-daniel-diaz-de-leon-code-sap-threat-detector/memory/project_llm_integration_pr.md\")",
-      "Bash(rm -rf \"/home/daniel-diaz-de-leon/code/sap-threat-detector/.claude/projects\")"
+      "Bash(rm -rf \"/home/daniel-diaz-de-leon/code/sap-threat-detector/.claude/projects\")",
+      "Bash(ruff format *)",
+      "WebFetch(domain:sap-api-bi.679168.xyz)",
+      "Bash(command -v python3)",
+      "Bash(awk '{print $NF}')",
+      "Bash(rm *)",
+      "Bash(command -v make)",
+      "Bash(grep -v \"^  dev$\")",
+      "Bash(grep -v \"^  main$\")"
     ]
   }
 }

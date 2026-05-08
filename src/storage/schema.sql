@@ -35,7 +35,7 @@ CREATE TABLE SECURITY_LOGS (
     LLM_PROMPT_CATEGORY  NVARCHAR(100),           -- Finance | HR | Support | etc.
     LLM_ERROR_MESSAGE    NVARCHAR(500),           -- populated when llm_status = error
     LLM_MODEL_ID         NVARCHAR(100),           -- gpt-4 | claude-3-opus | etc.
-    LLM_PROMPT_TOKENS    INTEGER,                 -- input tokens; >50k signals data exfiltration
+    LLM_PROMPT_TOKENS    INTEGER,                 -- input tokens (caps ~2k in observed traffic)
     INGESTED_AT       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -66,8 +66,9 @@ CREATE TABLE ANOMALIES (
     RULE_IDS             NCLOB,
     TOTAL_REQUESTS       INTEGER,
     ERROR_RATE           DECIMAL(5, 4),
-    PIPELINE_MTTD_MS     INTEGER,                    -- detected_at - ingested_at
-    E2E_MTTD_MS          INTEGER,                    -- detected_at - log event time
+    -- BIGINT keeps long-running/backfilled events from overflowing HANA INTEGER.
+    PIPELINE_MTTD_MS     BIGINT,                     -- detected_at - ingested_at
+    E2E_MTTD_MS          BIGINT,                     -- detected_at - log event time
     ALERT_ID             NVARCHAR(100),              -- idempotency key
     DEDUP_KEY            NVARCHAR(100),
     WEBHOOK_SENT         BOOLEAN         DEFAULT FALSE,

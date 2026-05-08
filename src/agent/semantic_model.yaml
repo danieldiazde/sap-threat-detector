@@ -1,0 +1,308 @@
+# Semantic model — single source of truth for the agent's schema knowledge.
+# - The bare-DDL block in the system prompt is generated from this file.
+# - The `describe_schema` tool serves the rich metadata directly.
+# Keep aligned with src/storage/schema.sql when columns change.
+#
+# Format notes:
+# - `type`: HANA SQL type, exactly as in schema.sql (e.g. NVARCHAR(50), DECIMAL(10,6)).
+# - `nullable`: true unless schema.sql declares NOT NULL.
+# - `meaning`: one or two sentences. Stays in describe_schema, not in the
+#   bare DDL block — keep it analyst-facing, not implementation trivia.
+# - `null_semantics`: optional. Only fill when "NULL" carries non-obvious info
+#   (e.g. LLM_* columns are NULL by design for non-LLM traffic).
+# - `common_filters`: optional. SQL fragments the agent can splice into WHERE.
+
+tables:
+  SECURITY_LOGS:
+    description: >-
+      Raw SAP security logs ingested from the SAP API. One row per request
+      observed by SAP. Primary fact table for log-volume questions.
+    columns:
+      - name: ID
+        type: BIGINT
+        nullable: false
+        meaning: Surrogate primary key (HANA-generated identity).
+      - name: LOG_ID
+        type: NVARCHAR(64)
+        nullable: true
+        meaning: SAP API `_id`. Unique per ingested row; used for dedup.
+      - name: DATETIME
+        type: TIMESTAMP
+        nullable: false
+        meaning: Event time as reported by SAP. Use this for time-window filters.
+        common_filters:
+          - "DATETIME > ADD_SECONDS(CURRENT_TIMESTAMP, -86400)"
+      - name: SOURCE_IP
+        type: NVARCHAR(50)
+        nullable: false
+        meaning: Origin IP of the request. Primary grouping key for SAP-detector anomalies.
+      - name: PORT_SERVICE
+        type: NVARCHAR(50)
+        nullable: true
+        meaning: Service/port label (free text).
+      - name: EVENT_DESCRIPTION
+        type: NVARCHAR(500)
+        nullable: true
+        meaning: Free-text description of the event. Use LIKE/regex to match.
+      - name: STATUS
+        type: NVARCHAR(50)
+        nullable: true
+        meaning: SAP-reported status string (e.g. "success", "denied").
+      - name: LOG_TYPE
+        type: NVARCHAR(50)
+        nullable: true
+        meaning: Coarse category of the log (e.g. "auth", "network", "llm").
+      - name: REQUEST_PATH
+        type: NVARCHAR(500)
+        nullable: true
+        meaning: HTTP path of the request (raw).
+      - name: SAP_APPLICATION
+        type: NVARCHAR(100)
+        nullable: true
+        meaning: SAP application name that served the request.
+      - name: REGION_CODE
+        type: NVARCHAR(20)
+        nullable: true
+        meaning: Datacenter region code (e.g. "NL-AMS2", "US-TX").
+      - name: MACRO_REGION
+        type: NVARCHAR(50)
+        nullable: true
+        meaning: Continent-level region (e.g. "Europe", "North America").
+      - name: HTTP_METHOD
+        type: NVARCHAR(10)
+        nullable: true
+        meaning: HTTP verb (GET | POST | DELETE | PUT | PATCH).
+      - name: SAP_SOURCE_TYPE
+        type: NVARCHAR(50)
+        nullable: true
+        meaning: Protocol family (BTP-Event | BAPI | RFC | OData | REST | SOAP).
+      - name: SAP_APP_ENV
+        type: NVARCHAR(50)
+        nullable: true
+        meaning: Deployment environment (sandbox | development | staging | production | qa).
+      - name: LLM_TOTAL_TOKENS
+        type: INTEGER
+        nullable: true
+        meaning: Total tokens for an LLM call.
+        null_semantics: NULL by design for non-LLM traffic. NULL is not a data quality issue.
+      - name: LLM_COST_USD
+        type: DOUBLE
+        nullable: true
+        meaning: Estimated cost in USD for an LLM call.
+        null_semantics: NULL for non-LLM traffic.
+      - name: LLM_FINISH_REASON
+        type: NVARCHAR(50)
+        nullable: true
+        meaning: Why the LLM call ended (stop | length | content_filter).
+        null_semantics: NULL for non-LLM traffic.
+      - name: LLM_STATUS
+        type: NVARCHAR(50)
+        nullable: true
+        meaning: LLM call outcome (success | error).
+        null_semantics: NULL for non-LLM traffic.
+      - name: LLM_RESPONSE_TIME_MS
+        type: DOUBLE
+        nullable: true
+        meaning: Latency of the LLM call in milliseconds.
+        null_semantics: NULL for non-LLM traffic.
+      - name: LLM_PROMPT_CATEGORY
+        type: NVARCHAR(100)
+        nullable: true
+        meaning: Functional grouping of the prompt (Finance | HR | Support | …).
+        null_semantics: NULL for non-LLM traffic.
+      - name: LLM_ERROR_MESSAGE
+        type: NVARCHAR(500)
+        nullable: true
+        meaning: Populated when LLM_STATUS = 'error'.
+      - name: LLM_MODEL_ID
+        type: NVARCHAR(100)
+        nullable: true
+        meaning: Which LLM was called (gpt-4 | claude-3-opus | …).
+        null_semantics: NULL for non-LLM traffic.
+      - name: LLM_PROMPT_TOKENS
+        type: INTEGER
+        nullable: true
+        meaning: Input-token count for the LLM call.
+        null_semantics: NULL for non-LLM traffic.
+      - name: INGESTED_AT
+        type: TIMESTAMP
+        nullable: true
+        meaning: When the row was inserted into HANA. DETECTED_AT - INGESTED_AT = pipeline MTTD.
+    metrics:
+      log_volume_24h: "SELECT COUNT(*) FROM SECURITY_LOGS WHERE DATETIME > ADD_SECONDS(CURRENT_TIMESTAMP, -86400)"
+      llm_traffic_share: "SUM(CASE WHEN LLM_MODEL_ID IS NOT NULL THEN 1 ELSE 0 END) / COUNT(*)"
+    example_queries:
+      - "SELECT SAP_APPLICATION, COUNT(*) AS n FROM SECURITY_LOGS WHERE DATETIME > ADD_SECONDS(CURRENT_TIMESTAMP, -86400) GROUP BY SAP_APPLICATION ORDER BY n DESC"
+      - "SELECT COUNT(*) FROM SECURITY_LOGS WHERE LLM_STATUS = 'error' AND DATETIME > ADD_SECONDS(CURRENT_TIMESTAMP, -3600)"
+
+  ANOMALIES:
+    description: >-
+      Anomaly events emitted by the detectors. The DETECTOR column splits
+      'sap' (source-IP-keyed isolation forest) from 'llm' (cohort-keyed
+      ensemble). Use this table for threat counts, MTTD, and threat-level
+      breakdowns.
+    columns:
+      - name: ID
+        type: BIGINT
+        nullable: false
+        meaning: Surrogate primary key.
+      - name: DETECTED_AT
+        type: TIMESTAMP
+        nullable: false
+        meaning: When the detector flagged the anomaly. Use for time-window filters.
+        common_filters:
+          - "DETECTED_AT > ADD_SECONDS(CURRENT_TIMESTAMP, -86400)"
+      - name: INGESTED_AT
+        type: TIMESTAMP
+        nullable: true
+        meaning: Ingest time of the underlying logs. PIPELINE_MTTD_MS = DETECTED_AT - INGESTED_AT.
+      - name: DETECTOR
+        type: NVARCHAR(20)
+        nullable: true
+        meaning: Which detector fired ('sap' or 'llm'). Filter to 'llm' for LLM-cohort anomalies.
+      - name: SOURCE_IP
+        type: NVARCHAR(50)
+        nullable: true
+        meaning: Source IP for SAP-detector anomalies. NULL for LLM-detector rows.
+        null_semantics: NULL when DETECTOR='llm' (LLM anomalies are keyed on model+category).
+      - name: LLM_MODEL_ID
+        type: NVARCHAR(100)
+        nullable: true
+        meaning: Cohort key for LLM anomalies.
+        null_semantics: NULL when DETECTOR='sap'.
+      - name: LLM_PROMPT_CATEGORY
+        type: NVARCHAR(100)
+        nullable: true
+        meaning: Cohort key for LLM anomalies.
+        null_semantics: NULL when DETECTOR='sap'.
+      - name: THREAT_LEVEL
+        type: NVARCHAR(10)
+        nullable: false
+        meaning: Severity bucket — 'high' | 'medium' | 'low' (lowercase).
+        common_filters:
+          - "THREAT_LEVEL = 'high'"
+      - name: ANOMALY_SCORE
+        type: DECIMAL(10,6)
+        nullable: true
+        meaning: >-
+          Isolation-forest score. Lower = more anomalous (sign convention!).
+          For HIGH bucket the score is roughly < -0.3; MEDIUM ~ -0.1.
+        common_filters:
+          - "ANOMALY_SCORE < -0.3"
+      - name: IF_GLOBAL_SCORE
+        type: DECIMAL(10,6)
+        nullable: true
+        meaning: LLM-ensemble component — global isolation-forest score.
+        null_semantics: NULL for SAP-detector rows.
+      - name: IF_CATEGORY_SCORE
+        type: DECIMAL(10,6)
+        nullable: true
+        meaning: LLM-ensemble component — per-category isolation-forest score.
+        null_semantics: NULL for SAP-detector rows.
+      - name: RULE_IDS
+        type: NCLOB
+        nullable: true
+        meaning: JSON array of rule IDs that fired (e.g. ["LLM_TOKEN_HIGH"]). Use JSON_VALUE / JSON_QUERY.
+      - name: TOTAL_REQUESTS
+        type: INTEGER
+        nullable: true
+        meaning: Number of requests in the window that triggered the anomaly.
+      - name: ERROR_RATE
+        type: DECIMAL(5,4)
+        nullable: true
+        meaning: Error rate of the window that triggered the anomaly (0.0–1.0).
+      - name: PIPELINE_MTTD_MS
+        type: INTEGER
+        nullable: true
+        meaning: Internal MTTD — DETECTED_AT minus INGESTED_AT, in ms.
+      - name: E2E_MTTD_MS
+        type: INTEGER
+        nullable: true
+        meaning: End-to-end MTTD — DETECTED_AT minus the log's own DATETIME, in ms. Real-world MTTD.
+      - name: ALERT_ID
+        type: NVARCHAR(100)
+        nullable: true
+        meaning: Idempotency key for outbound alerts.
+      - name: DEDUP_KEY
+        type: NVARCHAR(100)
+        nullable: true
+        meaning: Dedup key (cohort signature) used by the alert deduplicator.
+      - name: WEBHOOK_SENT
+        type: BOOLEAN
+        nullable: true
+        meaning: True after the SAP alert webhook successfully accepted the payload.
+      - name: INCIDENT_REPORT_PATH
+        type: NVARCHAR(500)
+        nullable: true
+        meaning: Filesystem path to the generated incident report, when one was produced.
+      - name: RESOLVED_AT
+        type: TIMESTAMP
+        nullable: true
+        meaning: Set when an analyst closes the incident.
+      - name: CREATED_AT
+        type: TIMESTAMP
+        nullable: true
+        meaning: Row insert time (HANA-side).
+    metrics:
+      anomaly_count_24h: "SELECT COUNT(*) FROM ANOMALIES WHERE DETECTED_AT > ADD_SECONDS(CURRENT_TIMESTAMP, -86400)"
+      mttd_p95_ms: "SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY PIPELINE_MTTD_MS) FROM ANOMALIES WHERE DETECTED_AT > ADD_SECONDS(CURRENT_TIMESTAMP, -86400)"
+      high_severity_share: "SUM(CASE WHEN THREAT_LEVEL='high' THEN 1 ELSE 0 END) / COUNT(*)"
+    example_queries:
+      - "SELECT SOURCE_IP, COUNT(*) AS n, MIN(ANOMALY_SCORE) AS worst FROM ANOMALIES WHERE DETECTED_AT > ADD_SECONDS(CURRENT_TIMESTAMP, -3600) AND DETECTOR='sap' GROUP BY SOURCE_IP ORDER BY n DESC"
+      - "SELECT LLM_MODEL_ID, COUNT(*) FROM ANOMALIES WHERE DETECTOR='llm' AND DETECTED_AT > ADD_SECONDS(CURRENT_TIMESTAMP, -86400) GROUP BY LLM_MODEL_ID"
+
+  MODEL_VERSIONS:
+    description: >-
+      Model registry. One row per trained-and-saved model. The IS_ACTIVE
+      flag identifies the model currently in use by the pipeline.
+    columns:
+      - name: ID
+        type: BIGINT
+        nullable: false
+        meaning: Surrogate primary key.
+      - name: VERSION_TAG
+        type: NVARCHAR(50)
+        nullable: false
+        meaning: Human-readable version tag (e.g. "20260425-103015-a1b2c3").
+      - name: MODEL_TYPE
+        type: NVARCHAR(50)
+        nullable: true
+        meaning: Algorithm family ("isolation_forest" | "dbscan").
+      - name: TRAINED_AT
+        type: TIMESTAMP
+        nullable: false
+        meaning: When the model was trained.
+      - name: CONTAMINATION
+        type: DECIMAL(5,4)
+        nullable: true
+        meaning: Hyperparameter — expected anomaly fraction during fit.
+      - name: TRAINING_SAMPLES
+        type: INTEGER
+        nullable: true
+        meaning: Number of rows used to train.
+      - name: FEATURE_COLUMNS
+        type: NCLOB
+        nullable: true
+        meaning: JSON array of feature names used at fit time.
+      - name: HYPERPARAMS
+        type: NCLOB
+        nullable: true
+        meaning: JSON object of hyperparameters.
+      - name: CV_SCORES
+        type: NCLOB
+        nullable: true
+        meaning: JSON object of cross-validation scores from training.
+      - name: IS_ACTIVE
+        type: BOOLEAN
+        nullable: true
+        meaning: True for the model currently serving predictions. At most one row should be true.
+      - name: NOTES
+        type: NVARCHAR(500)
+        nullable: true
+        meaning: Free-text notes attached at training time.
+      - name: CREATED_AT
+        type: TIMESTAMP
+        nullable: true
+        meaning: Row insert time.
+    example_queries:
+      - "SELECT VERSION_TAG, TRAINED_AT, MODEL_TYPE FROM MODEL_VERSIONS WHERE IS_ACTIVE = TRUE"

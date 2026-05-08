@@ -3,14 +3,12 @@ sap_log_fetcher.py
 ------------------
 OBSERVE phase — paginated ingestion of security logs from the SAP API.
 
-Ingestion is async and auto-retried on transient errors. Until
-``SAP_API_URL`` is set, the fetcher returns rows from the local mock CSV
-so the rest of the pipeline can run end-to-end before April 13.
+Ingestion is async and auto-retried on transient errors. When ``SAP_API_URL``
+is unset, the fetcher returns rows from the local mock CSV so the pipeline
+can run end-to-end without the live API.
 
 Every returned batch carries an ``ingested_at`` timestamp so downstream
 code (``predict``, ``pipeline``) can compute the pipeline MTTD.
-
-Owner: Data Architect & Backend Developer
 """
 
 from __future__ import annotations
@@ -97,11 +95,35 @@ async def fetch_logs(page: int = 1) -> pd.DataFrame:
 
     raw = await _get_with_retry(
         url=f"{settings.sap_api_url}/logs/current",
-        headers={"Authorization": f"Bearer {settings.sap_api_key}"},
+        headers=_auth_headers(),
         params={"page": page},
     )
     df = parse_raw_response(raw)
     return _stamp_ingested_at(df)
+
+
+async def fetch_info() -> dict[str, object]:
+    """
+    Fetch ``/info`` for the current SAP window.
+
+    Returns the parsed JSON dict, or ``{}`` when the API is unreachable
+    (spec status 503 = "data not loaded yet"). Mock mode returns ``{}``.
+
+    Used by :func:`fetch_all_logs` to drive the page loop and by the
+    conversational agent's ``get_current_window_info`` tool.
+    """
+    if settings.mock_api:
+        return {}
+    headers = _auth_headers()
+    info = await _get_with_retry(
+        url=f"{settings.sap_api_url}/info",
+        headers=headers,
+        params={},
+        non_fatal_statuses=(503,),
+    )
+    if not isinstance(info, dict):
+        return {}
+    return info
 
 
 async def fetch_all_logs() -> pd.DataFrame:
@@ -124,16 +146,11 @@ async def fetch_all_logs() -> pd.DataFrame:
     if settings.mock_api:
         return _fetch_mock_logs()
 
-    headers = {"Authorization": f"Bearer {settings.sap_api_key}"}
+    headers = _auth_headers()
 
     # Step 1: /info — also tells us if the window rolled.
-    info = await _get_with_retry(
-        url=f"{settings.sap_api_url}/info",
-        headers=headers,
-        params={},
-        non_fatal_statuses=(503,),
-    )
-    if not isinstance(info, dict):
+    info = await fetch_info()
+    if not info:
         logger.info("fetcher.info_unavailable")
         return pd.DataFrame()
 
@@ -305,6 +322,13 @@ def _log_retry(attempt: int, exc: Exception) -> None:
         "fetcher.retry",
         extra={"attempt": attempt, "max": RETRY_MAX_ATTEMPTS, "error": str(exc)},
     )
+
+
+def _auth_headers() -> dict[str, str]:
+    # Avoid an illegal "Bearer " header when SAP_API_URL is set but the key
+    # is absent/malformed; the API will return a normal 401 instead.
+    token = settings.sap_api_key.strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def _stamp_ingested_at(df: pd.DataFrame, at: datetime | None = None) -> pd.DataFrame:

@@ -12,7 +12,12 @@ import httpx
 import pandas as pd
 import pytest
 from src.ingestion import sap_log_fetcher
-from src.ingestion.sap_log_fetcher import _fetch_mock_logs, fetch_all_logs, fetch_logs
+from src.ingestion.sap_log_fetcher import (
+    _auth_headers,
+    _fetch_mock_logs,
+    fetch_all_logs,
+    fetch_logs,
+)
 
 
 class TestMockFetcher:
@@ -52,6 +57,13 @@ class TestFetchLogs:
             val = df["ingested_at"].iloc[0]
             from datetime import datetime
             assert isinstance(val, datetime)
+
+
+class TestAuthHeaders:
+    def test_empty_api_key_omits_illegal_bearer_header(self):
+        with patch("src.ingestion.sap_log_fetcher.settings") as mock_settings:
+            mock_settings.sap_api_key = ""
+            assert _auth_headers() == {}
 
 
 def _row(ip: str = "10.0.0.1") -> dict:

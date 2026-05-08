@@ -108,6 +108,7 @@ Template for a rejection entry:
 
 | Date | Event | Source | Row count | Notes |
 |---|---|---|---|---|
+| 2026-04-27 | LLM telemetry audit (`data/reports/llm_audit_2026-04-27.md`) | `scripts/audit_llm_telemetry.py` | 638,970 LLM rows of 1,773,138 (36.0%); 320 (MODEL_ID, PROMPT_CATEGORY) cohorts | Per-LLM-row NULL rate of 38.8% on telemetry columns is a real missing-data signal (these rows *are* LLM rows). Use p99.5 of `LLM_PROMPT_TOKENS` as the data-driven 'token bomb' floor; rule catalog in `src/model/llm_rules.py` derives from this audit. |
 | 2026-04-22 | First schema-expansion audit (`data/reports/schema_audit_2026-04-22.md`) | `scripts/audit_schema_expansion.py` | 895,904 total; **701,838 pre-expansion (78.3%)** | Rubric: >40% → legacy-only model or backfill. Drop strategy would lose 78.3% of training data (194,066 rows remaining). Impute keeps all rows but biases 7 features. See Open question #1. |
 | 2026-04-21 | Schema expansion (commit `5b5d777`) | migration | *see 2026-04-22 audit above* | 16 columns added; rows before this date have NULLs in those columns. |
 
