@@ -19,6 +19,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import urllib.parse
 
 import httpx
@@ -32,12 +33,23 @@ _cached_token: str = ""
 
 
 def _ensure_token() -> str:
-    """Return a valid UAA token, fetching one if the cache is empty.
+    """Return a valid UAA token, using CF_PROXY_TOKEN env var or fetching from UAA.
+
+    CF trial containers cannot reach the UAA endpoint (external internet blocked).
+    Workaround: obtain a token locally via ``cf set-env ... CF_PROXY_TOKEN <token>``
+    and restart the app.  Tokens last ~12 h.
 
     Sync, safe to call from a thread (used by hdbcli path via asyncio.to_thread).
     """
     global _cached_token
     if _cached_token:
+        return _cached_token
+
+    # Prefer an injected token so CF trial containers (no external egress) work.
+    env_token = os.environ.get("CF_PROXY_TOKEN", "")
+    if env_token:
+        _cached_token = env_token
+        logger.info("cf_proxy.token_from_env")
         return _cached_token
 
     token_url = f"{settings.cf_proxy_token_url}/oauth/token"
