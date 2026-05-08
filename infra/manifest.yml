@@ -21,3 +21,5 @@ applications:
       PYTHONUNBUFFERED: "1"
       WEB_CONCURRENCY: "1"
     # Secrets are set via GitHub Actions (cf set-env) — never put them here.
+    services:
+      - connectivity

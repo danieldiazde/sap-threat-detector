@@ -52,7 +52,13 @@ _last_window_start: str | None = None  # tracks the last fetched window
 def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS)
+        from src.common.cf_proxy import get_httpx_proxy_url
+
+        proxy_url = get_httpx_proxy_url()
+        _client = httpx.AsyncClient(
+            timeout=HTTP_TIMEOUT_SECONDS,
+            proxies={"https://": proxy_url, "http://": proxy_url} if proxy_url else None,
+        )
     return _client
 
 
@@ -133,7 +139,7 @@ async def fetch_all_logs() -> pd.DataFrame:
 
     window_start = info.get("window_start")
     if window_start is not None and window_start == _last_window_start:
-        logger.debug("fetcher.skip_duplicate_window", extra={"window_start": window_start})
+        logger.info("fetcher.skip_duplicate_window", extra={"window_start": window_start})
         return pd.DataFrame()
 
     try:
