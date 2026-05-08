@@ -40,13 +40,19 @@ def _ensure_token() -> str:
     if _cached_token:
         return _cached_token
 
-    resp = httpx.post(
-        f"{settings.cf_proxy_token_url}/oauth/token",
-        params={"grant_type": "client_credentials", "response_type": "token"},
-        auth=(settings.cf_proxy_client_id, settings.cf_proxy_client_secret),
-        timeout=10.0,
-    )
-    resp.raise_for_status()
+    token_url = f"{settings.cf_proxy_token_url}/oauth/token"
+    logger.info("cf_proxy.token_fetch", extra={"url": token_url})
+    try:
+        resp = httpx.post(
+            token_url,
+            params={"grant_type": "client_credentials", "response_type": "token"},
+            auth=(settings.cf_proxy_client_id, settings.cf_proxy_client_secret),
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+    except Exception as exc:
+        logger.error("cf_proxy.token_fetch_failed", extra={"error": str(exc)})
+        raise
     _cached_token = resp.json()["access_token"]
     logger.info("cf_proxy.token_fetched")
     return _cached_token
