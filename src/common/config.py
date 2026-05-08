@@ -16,6 +16,7 @@ Owner: Cloud Integration Engineer
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -51,6 +52,18 @@ DEFAULT_MODEL_VERSION: Final[str] = "latest"
 DEFAULT_TEAM_ID: Final[str] = "team-tec"
 DEFAULT_AGENT_MODEL: Final[str] = "claude-sonnet-4-6"
 DEFAULT_AGENT_MAX_ITERATIONS: Final[int] = 5
+
+
+def _parse_vcap_connectivity() -> dict:
+    """Extract credentials from VCAP_SERVICES['connectivity'][0]['credentials']."""
+    raw = os.getenv("VCAP_SERVICES")
+    if not raw:
+        return {}
+    try:
+        vcap = json.loads(raw)
+        return vcap.get("connectivity", [{}])[0].get("credentials", {})
+    except (json.JSONDecodeError, IndexError, AttributeError, TypeError):
+        return {}
 
 
 def _env_str(key: str, default: str = "") -> str:
@@ -130,12 +143,25 @@ class Settings:
     agent_model: str
     agent_max_iterations: int
 
+    # --- CF Connectivity Service (Cloud Connector proxy) ---
+    # Populated from VCAP_SERVICES["connectivity"] when the service is bound.
+    cf_proxy_host: str
+    cf_proxy_port: int
+    cf_proxy_client_id: str
+    cf_proxy_client_secret: str
+    cf_proxy_token_url: str
+
     # --- Paths ---
     project_root: Path = field(default_factory=lambda: Path(__file__).resolve().parents[2])
     model_dir: Path = field(default_factory=lambda: Path("models"))
     incident_report_dir: Path = field(default_factory=lambda: Path("reports/incidents"))
 
     # ── Derived mock flags ──────────────────────────────────────────────
+
+    @property
+    def cf_proxy_enabled(self) -> bool:
+        """True when the CF Connectivity Service is bound and proxy host/port are available."""
+        return bool(self.cf_proxy_host and self.cf_proxy_port)
 
     @property
     def mock_api(self) -> bool:
@@ -165,6 +191,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         """Build a Settings instance from current process env vars."""
+        _conn = _parse_vcap_connectivity()
         return cls(
             sap_api_url=_env_str("SAP_API_URL"),
             sap_api_key=_env_str("SAP_API_KEY"),
@@ -222,6 +249,11 @@ class Settings:
             incident_report_dir=Path(
                 _env_str("INCIDENT_REPORT_DIR", "reports/incidents")
             ),
+            cf_proxy_host=_conn.get("onpremise_proxy_host", ""),
+            cf_proxy_port=int(_conn.get("onpremise_proxy_port", 0) or 0),
+            cf_proxy_client_id=_conn.get("clientid", ""),
+            cf_proxy_client_secret=_conn.get("clientsecret", ""),
+            cf_proxy_token_url=_conn.get("token_service_url", ""),
         )
 
 
