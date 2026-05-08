@@ -74,7 +74,7 @@ class Pipeline:
         # OBSERVE
         df = await fetch_all_logs()
         if df.empty:
-            logger.info("pipeline.run_once.no_data")
+            logger.info("pipeline.run_once.no_data", extra={"reason": "duplicate_window_guard"})
             metrics.incr_pipeline_runs()
             return {"status": "no_data", "logs": 0}
 
