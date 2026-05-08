@@ -105,7 +105,22 @@
       "Bash(rm *)",
       "Bash(command -v make)",
       "Bash(grep -v \"^  dev$\")",
-      "Bash(grep -v \"^  main$\")"
+      "Bash(grep -v \"^  main$\")",
+      "Bash(cf env *)",
+      "Bash(cf push *)",
+      "Bash(cf events *)",
+      "Bash(node -e ' *)",
+      "Bash(Remove-Item \"data/samples/sample_logs.csv\" -ErrorAction SilentlyContinue)",
+      "Bash(cf set-env *)",
+      "Bash(cf restage *)",
+      "Bash(cf security-groups *)",
+      "Bash(cf security-group *)",
+      "Bash(cf run-task *)",
+      "Bash(cf marketplace *)",
+      "Bash(cf services *)",
+      "Bash(cf bind-service *)",
+      "Bash(cf tasks *)",
+      "Bash(cf create-service *)"
     ]
   }
 }
