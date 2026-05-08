@@ -84,6 +84,7 @@ def get_hdbcli_proxy_kwargs() -> dict:
         "proxyPort": settings.cf_proxy_port,
         "proxyUserName": settings.cf_proxy_client_id,
         "proxyPassword": token,
+        "proxyHTTPtunnel": True,
     }
 
 
