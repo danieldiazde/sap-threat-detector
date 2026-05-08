@@ -122,14 +122,21 @@ def _bootstrap_llm_model() -> None:
         "INGESTED_AT": "ingested_at",
     }
 
+    from src.common.cf_proxy import get_hdbcli_proxy_kwargs
+
     logger.info("api.bootstrap_llm_model.start")
-    conn = dbapi.connect(
+    kwargs: dict = dict(
         address=settings.hana_host,
         port=settings.hana_port,
         user=settings.hana_user,
         password=settings.hana_password,
-        databaseName=settings.hana_database,
+        encrypt=True,
+        sslValidateCertificate=False,
+        **get_hdbcli_proxy_kwargs(),
     )
+    if settings.hana_database:
+        kwargs["databaseName"] = settings.hana_database
+    conn = dbapi.connect(**kwargs)
     try:
         cur = conn.cursor()
         cols = ", ".join(_COLUMN_MAP.keys())
@@ -171,7 +178,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     global _pipeline, _pipeline_task
 
-    logger.info("api.startup", extra={"environment": settings.environment})
+    logger.info(
+        "api.startup",
+        extra={
+            "environment": settings.environment,
+            "cf_proxy_enabled": settings.cf_proxy_enabled,
+            "cf_proxy_host": settings.cf_proxy_host or "none",
+        },
+    )
 
     # Storage — non-fatal: app boots even if HANA is temporarily unreachable
     try:
