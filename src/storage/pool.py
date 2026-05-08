@@ -105,6 +105,8 @@ class HanaPool:
         def _fresh_ping() -> None:
             from hdbcli import dbapi
 
+            from src.common.cf_proxy import get_hdbcli_proxy_kwargs
+
             kwargs: dict = dict(
                 address=settings.hana_host,
                 port=settings.hana_port,
@@ -113,6 +115,7 @@ class HanaPool:
                 encrypt=True,
                 sslValidateCertificate=False,
                 communicationTimeout=10000,
+                **get_hdbcli_proxy_kwargs(),
             )
             if settings.hana_database:
                 kwargs["databaseName"] = settings.hana_database
@@ -140,6 +143,8 @@ class HanaPool:
     def _open_connection() -> Connection:  # type: ignore[valid-type]
         from hdbcli import dbapi
 
+        from src.common.cf_proxy import get_hdbcli_proxy_kwargs
+
         kwargs: dict = dict(
             address=settings.hana_host,
             port=settings.hana_port,
@@ -147,6 +152,7 @@ class HanaPool:
             password=settings.hana_password,
             encrypt=True,
             sslValidateCertificate=False,
+            **get_hdbcli_proxy_kwargs(),
         )
         if settings.hana_database:
             kwargs["databaseName"] = settings.hana_database
