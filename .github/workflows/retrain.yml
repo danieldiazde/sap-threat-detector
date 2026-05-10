@@ -28,7 +28,9 @@ jobs:
         run: |
           cf run-task sap-threat-detector \
             --command 'python -m scripts.train_model' \
-            --name daily-retrain
+            --name daily-retrain \
+            -m 2G \
+            -k 2G
 
       - name: Wait for task completion and check status
         run: |

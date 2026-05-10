@@ -104,7 +104,6 @@ class HanaPool:
 
         def _fresh_ping() -> None:
             from hdbcli import dbapi
-
             from src.common.cf_proxy import get_hdbcli_proxy_kwargs
 
             kwargs: dict = dict(
@@ -142,7 +141,6 @@ class HanaPool:
     @staticmethod
     def _open_connection() -> Connection:  # type: ignore[valid-type]
         from hdbcli import dbapi
-
         from src.common.cf_proxy import get_hdbcli_proxy_kwargs
 
         kwargs: dict = dict(

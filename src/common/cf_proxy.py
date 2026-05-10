@@ -23,7 +23,6 @@ import os
 import urllib.parse
 
 import httpx
-
 from src.common.config import settings
 from src.common.logging import get_logger
 
