@@ -1,253 +1,152 @@
-# 🛡️ SAP AI Security — Anomaly Detection
-**TEC × SAP Hackathon | Team Project**
+# SAP AI Security — Threat Detector
 
-> Real-time threat defense for SAP infrastructure using unsupervised ML anomaly detection.
+**TEC × SAP Hackathon — Live Security Operations Center Defense**
+
+Real-time threat detection for SAP infrastructure using unsupervised
+machine learning on SAP security logs. The system observes the live
+SAP log stream, scores per-IP behavior with an Isolation Forest, and
+fires HMAC-signed incident webhooks to the SAP Alerting endpoint —
+all running on SAP BTP Cloud Foundry with SAP HANA Cloud as the data
+plane.
+
+The full technical architecture is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+A pipeline diagram source for diagrams.net is at
+[`docs/architecture.drawio`](docs/architecture.drawio).
 
 ---
 
-## 🎯 Mission
+## Mission
+
 **OBSERVE → ANALYZE → DETECT → RESPOND**
 
-Build a live Security Operations Center (SOC) pipeline that:
-1. **Ingests** security logs from the SAP API (paginated)
-2. **Analyzes** log patterns using unsupervised ML (NumPy + Pandas + Scikit-learn)
-3. **Detects** anomalies: spike attacks, multi-bucket anomalies, unusual request patterns
-4. **Responds** automatically via a SAP Alerting Webhook
+1. **Ingest** SAP security logs over the paginated SAP log API.
+2. **Analyze** per-IP behavior using a 17-feature matrix.
+3. **Detect** anomalies with an Isolation Forest plus an LLM-stream
+   detector for the conversational AI traffic.
+4. **Respond** automatically via the SAP Alerting Webhook.
 
 ---
 
-## 📅 Key Dates
+## Architecture
+
+```mermaid
+flowchart LR
+  SAPAPI[(SAP Log API)] --> OBSERVE
+  OBSERVE[OBSERVE<br/>ingestion] --> ANALYZE[ANALYZE<br/>features]
+  ANALYZE --> DETECT[DETECT<br/>Isolation Forest<br/>+ LLM detector]
+  DETECT --> RESPOND[RESPOND<br/>SAP webhook]
+  OBSERVE -.persist.-> HANA[(HANA Cloud)]
+  DETECT -.persist.-> HANA
+  DETECT -.metrics.-> DASH[Streamlit dashboard]
+```
+
+Deployed as a single Cloud Foundry application on SAP BTP. The
+FastAPI web process hosts the asyncio pipeline as a background task
+and exposes operational endpoints (`/health`, `/ready`, `/predict`,
+`/metrics`, `/anomalies`, `/agent`). A daily Cloud Foundry task
+retrains the model from the last 30 days of HANA history.
+
+---
+
+## Key dates
+
 | Date | Milestone |
-|------|-----------|
-| April 6 | Kick Off + Course & Learning Materials |
-| **April 13** | API & Data Access provided by SAP |
-| **April 27** | Alerting Webhook provided by SAP |
-| **May 4** | Go Live |
-| May 12–14 | First Eliminatory Phase |
-| May 15 | Next Phase Winner Announcements |
-| **May 21** | Final Phase — First To Go Down |
+|---|---|
+| 2026-04-13 | SAP Security Log API access |
+| 2026-04-27 | SAP Alerting Webhook access |
+| **2026-05-04** | **Production go-live on SAP BTP** |
+| 2026-05-12 to 14 | First eliminatory phase |
+| 2026-05-21 | Final phase |
 
 ---
 
-## 🏗️ Architecture
-
-```
-                        ┌─────────────────────────────────────┐
-                        │           HIGH MICROSERVICE LEVEL    │
-  SAP Data Centers ────►│                                      │
-  (API Auth Key)        │  ┌────────────┐    ┌─────────────┐  │
-                        │  │ ETL        │───►│ Data Storage │  │
-  SAP Log Batches ─────►│  │ Pipeline   │    │ (SAP HANA)  │  │
-                        │  └────────────┘    └─────────────┘  │
-                        │        │                  │          │
-                        │        ▼                  ▼          │
-                        │  ┌──────────────────────────────┐   │
-                        │  │        ML MODULE              │   │
-                        │  │  ┌────────────┐ ┌──────────┐ │   │
-                        │  │  │  Model     │ │ Retrain  │ │   │
-                        │  │  │ Versioning │ │ Pipeline │ │   │
-                        │  │  └────────────┘ └──────────┘ │   │
-                        │  │  ┌────────────┐ ┌──────────┐ │   │
-                        │  │  │    Obs     │ │Integrat- │ │   │
-                        │  │  │Capabilities│ │  ions    │ │   │
-                        │  └──────────────────────────────┘   │
-                        │        │                             │
-                        │        ▼                             │
-                        │  ┌──────────┐   ┌───────────────┐  │
-                        │  │Dashboards│   │Alerting System│  │
-                        │  │(Streamlit│   │  → Webhook ───┼──┼──► SAP AI Security Team
-                        │  │  + SAC)  │   │               │  │
-                        │  └──────────┘   └───────────────┘  │
-                        └─────────────────────────────────────┘
-```
-
----
-
-## 🗂️ Repository Structure
-
-```
-sap-threat-detector/
-├── .github/
-│   ├── workflows/
-│   │   ├── ci.yml              # Lint + tests on every PR
-│   │   └── deploy.yml          # Deploy to SAP BTP Cloud Foundry on merge to main
-│   └── CODEOWNERS              # Auto-assign reviewers by module
-│
-├── src/
-│   ├── ingestion/              # OBSERVE — ETL Pipeline
-│   │   ├── __init__.py
-│   │   ├── sap_log_fetcher.py  # Paginated log ingestion from SAP API
-│   │   └── log_parser.py       # Parse raw log format → structured DataFrame
-│   │
-│   ├── model/                  # ANALYZE + DETECT — ML Module
-│   │   ├── __init__.py
-│   │   ├── features.py         # Feature engineering (NumPy + Pandas)
-│   │   ├── train.py            # Unsupervised model training (Isolation Forest / DBSCAN)
-│   │   ├── predict.py          # Run inference on incoming log batches
-│   │   └── versioning.py       # Model versioning + retrain pipeline
-│   │
-│   ├── alerting/               # RESPOND — Alerting System
-│   │   ├── __init__.py
-│   │   ├── sap_webhook.py      # POST alert to SAP webhook endpoint
-│   │   └── incident_report.py  # Generate forensic incident report
-│   │
-│   ├── storage/                # Data persistence — SAP HANA
-│   │   ├── __init__.py
-│   │   ├── hana_client.py      # SAP HANA connection + queries
-│   │   └── schema.sql          # Table definitions for log storage
-│   │
-│   └── dashboard/              # Visualization — Streamlit + SAC
-│       ├── __init__.py
-│       └── app.py              # Streamlit real-time dashboard
-│
-├── tests/
-│   ├── unit/                   # Unit tests per module
-│   │   ├── test_ingestion.py
-│   │   ├── test_features.py
-│   │   ├── test_model.py
-│   │   └── test_alerting.py
-│   ├── integration/            # End-to-end pipeline tests
-│   │   └── test_pipeline.py
-│   └── model/                  # Model quality tests (precision, recall, MTTD)
-│       └── test_anomaly_detection.py
-│
-├── notebooks/
-│   └── eda.ipynb               # Exploratory Data Analysis — use AFTER getting real data Apr 13
-│
-├── infra/
-│   ├── manifest.yml            # SAP BTP Cloud Foundry deployment manifest
-│   └── mta.yaml                # Multi-Target Application descriptor for BTP
-│
-├── data/
-│   └── samples/
-│       └── sample_logs.csv     # Mock log data matching SAP format (for dev before Apr 13)
-│
-├── docs/
-│   ├── ARCHITECTURE.md         # Detailed architecture decisions
-│   ├── ROLES.md                # Team roles and responsibilities
-│   └── INCIDENT_REPORT.md      # Template for forensic incident reporting
-│
-├── .env.example                # Required environment variables (never commit .env)
-├── .gitignore
-├── Makefile                    # Shortcuts: make install, make test, make run, make deploy
-├── requirements.txt            # Python dependencies
-├── Procfile                    # Cloud Foundry process definition
-└── README.md
-```
-
----
-
-## 👥 Team Roles
-
-| Role | Responsibility | Primary Modules |
-|------|---------------|-----------------|
-| **AI & Data Science Specialist** | ML pipeline + anomaly detection models | `src/model/` |
-| **Cloud Integration Engineer** | SAP BTP orchestration + Cloud Foundry deployment | `infra/`, `src/ingestion/` |
-| **Data Architect & Backend Developer** | SAP HANA schema + data ingestion | `src/storage/`, `src/ingestion/` |
-| **Security Analyst & Visualization Lead** | Streamlit dashboard + SAC reports + forensic analysis | `src/dashboard/`, `docs/` |
-| **Technical Project Manager & Scrum Master** | Backlog, sprints, integration risk, stakeholder comms | GitHub Projects board |
-
----
-
-## 🔬 ML Approach
-
-The model uses **unsupervised learning** — no labeled attack data needed.
-
-**Log format expected from SAP API:**
-```
-[IP] - - [TIME] "GET [PATH]/[FILE] HTTP/[VERSION]" [STATUS] [SIZE]
-[IP] - - [TIME] "POST [PATH]/[FILE] HTTP/[VERSION]" [STATUS] [SIZE]
-```
-
-**Anomaly types to detect (per presentation):**
-- **Spike Anomaly** — sudden massive request volume from an IP
-- **Multi-Bucket Anomaly** — sustained elevated traffic across multiple time windows
-- **Categorization Anomaly** — unusual request patterns (e.g. POST to `/cgi-bin/` returning 404)
-
-**Candidate models:**
-- `IsolationForest` (scikit-learn) — primary anomaly detector, threshold-based
-- `DBSCAN` — clustering to identify outlier request patterns
-- Keras neural network — optional enhancement after baseline works
-
----
-
-## 📊 Evaluation Criteria (from SAP)
-
-| Criterion | Weight | What we optimize |
-|-----------|--------|-----------------|
-| Operational Efficiency & Real-Time Response | **40%** | Minimize MTTD, maximize automation |
-| SAP Ecosystem Integration & Tooling | **25%** | BTP + Cloud Foundry + HANA + SAC |
-| Architecture & MLOps Maturity | **20%** | Scalable pipeline, clean separation ML vs integration |
-| Business Impact & Strategic Analysis | **15%** | Forensic report, executive storytelling |
-
----
-
-## ⚙️ Tech Stack
-
-**Core Engineering & AI**
-- Data manipulation: `pandas`, `numpy`
-- ML: `scikit-learn` (baseline) + `keras` (advanced)
-- Frontend: `streamlit`
-
-**SAP Enterprise Infrastructure**
-- SAP BTP — application orchestration
-- SAP Cloud Foundry — runtime + deployment
-- SAP HANA — log storage + querying
-- SAP Analytics Cloud (SAC) — executive dashboards
-
----
-
-## 🚀 Getting Started
+## Getting started
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/your-org/sap-threat-detector.git
+git clone https://github.com/danieldiazde/sap-threat-detector.git
 cd sap-threat-detector
 
-# 2. Create virtual environment
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 
-# 3. Install dependencies
-make install
+make install            # pip install -r requirements-dev.txt
+cp .env.example .env    # fill in values
 
-# 4. Copy and fill in environment variables
-cp .env.example .env
+make test               # unit + integration
+make dashboard          # Streamlit SOC dashboard (local only)
+make run                # run the pipeline locally
+```
 
-# 5. Run tests
-make test
+Mock mode is automatic — when `SAP_API_URL`, `SAP_WEBHOOK_URL`, and
+`HANA_HOST` are unset, the system reads from `data/samples/`, logs
+alert payloads locally, and uses in-memory repositories.
 
-# 6. Run the dashboard locally
-make dashboard
+---
 
-# 7. Run the pipeline locally (uses mock data until Apr 13)
-make run
+## Build, test, deploy
+
+```bash
+make api                # uvicorn src.api.main:app --reload
+make lint               # ruff check
+make format             # ruff format
+make test-unit          # pytest tests/unit
+make test-model         # pytest tests/model
+make test-integration   # pytest tests/integration
+make train              # train from data/samples
+make deploy             # cf push -f infra/manifest.yml
+```
+
+CI runs lint + the full test matrix on every PR. Deploys are
+GitHub-Actions-driven; secrets are injected via `cf set-env` and never
+committed.
+
+---
+
+## Evaluation criteria
+
+| Criterion | Weight |
+|---|---|
+| Operational Efficiency & Real-Time Response (MTTD) | 40% |
+| SAP Ecosystem Integration & Tooling | 25% |
+| Architecture & MLOps Maturity | 20% |
+| Business Impact & Strategic Analysis | 15% |
+
+The system reports **dual MTTD** on every detection:
+
+- `pipeline_mttd_ms` — internal latency from ingestion to detection.
+- `e2e_mttd_ms` — real-world latency from log timestamp to detection.
+
+---
+
+## Repository layout
+
+```
+src/
+  api/          FastAPI app + Pydantic schemas
+  agent/        Conversational SOC agent (read-only HANA tools)
+  alerting/     Webhook, deduplication, incident reports
+  common/       Settings, logging, metrics, CF proxy, time utils
+  dashboard/    Streamlit SOC dashboard (local only)
+  ingestion/    SAP log fetcher + parser
+  llm/          LLM-stream anomaly detector
+  model/        Features, train, predict, versioning, evaluate
+  storage/      HANA pool, repositories, migrations
+  pipeline.py   Orchestrator
+scripts/        CLI tools
+tests/          Unit, integration, model tests
+infra/          Cloud Foundry manifest
+docs/           Architecture, model journal, ADRs, agent spec
 ```
 
 ---
 
-## 🌿 Branching Strategy
+## Security
 
-- `main` — always deployable, protected, requires 1 PR review + CI green
-- `dev` — integration branch, merge here first
-- Feature branches: `feat/`, `fix/`, `mlops/`, `infra/`, `data/`
-
-**Example:** `feat/isolation-forest-model`, `infra/btp-cloud-foundry`, `data/hana-schema`
-
----
-
-## ⚠️ Important Security Rules (from SAP)
-
-- **Never commit credentials** — use `.env` (gitignored) and GitHub Secrets
-- **Never commit raw log data** — `data/raw/` is gitignored
-- If credentials are exposed, SAP will **deprecate them and block the team for the next day**
-- All SAP API keys go in GitHub Secrets, not in code
-
----
-
-## 📝 Notes for the Team
-
-- Until **April 13** (API access), use `data/samples/sample_logs.csv` for development
-- Until **April 27** (webhook), mock the webhook call in `src/alerting/sap_webhook.py`
-- The demo moment SAP judges care about most: **attack detected → webhook fires in real time**
-- Prioritize **MTTD** (Mean Time to Detect) — it's 40% of the grade
+- No secrets in source. `.env` is gitignored; secrets are injected at
+  deploy time by GitHub Actions.
+- HANA connections are TLS-only and routed through the SAP BTP
+  Connectivity Service Proxy.
+- Webhook payloads are HMAC-signed; the SAP Alerting endpoint is
+  bearer-authenticated.
+- The conversational SOC agent's database role is read-only and
+  scoped to the three SOC tables.
