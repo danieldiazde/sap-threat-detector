@@ -181,8 +181,8 @@ convenience; prod uses BTP Object Store.
 
 ## References
 
-- `CLAUDE.md` → Schema evolution (for the NULL-handling caveat that
-  affects pre-expansion rows in the archive).
+- `docs/MODEL_JOURNAL.md` → schema evolution and the NULL-handling
+  caveat that affects pre-expansion rows in the archive.
 - `scripts/hana_summary.py` — row-count and HANA-size probe, source
   of the weekly CI check.
 - `scripts/migrate_add_columns.py` — idempotent-ALTER pattern to reuse
