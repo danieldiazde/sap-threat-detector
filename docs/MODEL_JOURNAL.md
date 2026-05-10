@@ -126,4 +126,4 @@ into this table as they're generated.
 - **Design-NULL** — a column intentionally NULL for certain row types
   (e.g., all nine `LLM_*` columns are NULL for non-LLM traffic).
 - **MTTD** — mean time to detect. Dual-defined in this project:
-  `pipeline_mttd_ms` and `e2e_mttd_ms`. See CLAUDE.md.
+  `pipeline_mttd_ms` and `e2e_mttd_ms`. See `docs/ARCHITECTURE.md`.
