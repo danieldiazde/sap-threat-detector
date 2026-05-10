@@ -289,7 +289,7 @@ with st.sidebar:
         sb_row("Settings", "src/common/config.py")
         + sb_row("Training", "scripts/train_model.py")
         + sb_row("Schema", "src/storage/schema.sql")
-        + sb_row("Branch rules", "CONTRIBUTING.md")
+        + sb_row("Architecture", "docs/ARCHITECTURE.md")
         + sb_row("Journal", "docs/MODEL_JOURNAL.md")
         + sb_row("ADRs", "docs/adr/"),
         unsafe_allow_html=True,
