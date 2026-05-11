@@ -301,8 +301,19 @@ _LIMIT_TRAILING = re.compile(r"(?is)\blimit\s+\d+\s*;?\s*$")
 _SQL_STRING = re.compile(r"'(?:''|[^'])*'")
 _SQL_LINE_COMMENT = re.compile(r"--[^\n\r]*")
 _SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
-_CTE_NAME = re.compile(r"(?is)(?:\bwith\b|,)\s*([A-Za-z_][\w$]*)\s+as\s*\(")
-_TABLE_REF = re.compile(r"(?is)\b(?:from|join)\s+([A-Za-z_][\w$]*)(?:\s*\.\s*([A-Za-z_][\w$]*))?")
+# HANA accepts identifiers in two forms: bare (uppercased automatically) or
+# quoted ("Foo") which preserves case and allows reserved words. Accept both
+# so we don't leave a quoted-identifier bypass past the allowlist.
+_IDENT = r'(?:"[^"]+"|[A-Za-z_][\w$]*)'
+_CTE_NAME = re.compile(rf"(?is)(?:\bwith\b|,)\s*({_IDENT})\s+as\s*\(")
+_TABLE_REF = re.compile(rf"(?is)\b(?:from|join)\s+({_IDENT})(?:\s*\.\s*({_IDENT}))?")
+
+
+def _normalize_ident(ident: str) -> str:
+    """Strip surrounding quotes and uppercase so the allowlist check is total."""
+    if len(ident) >= 2 and ident[0] == '"' and ident[-1] == '"':
+        return ident[1:-1].upper()
+    return ident.upper()
 
 
 def _enforce_limit(sql: str, cap: int) -> str:
@@ -338,16 +349,22 @@ def _sql_for_scope_checks(sql: str) -> str:
 
 
 def _validate_query_scope(sql: str) -> str | None:
-    """Return an error if the query touches tables outside the agent allowlist."""
+    """Return an error if the query touches tables outside the agent allowlist.
+
+    Handles both bare (``SECURITY_LOGS``) and quoted (``"SECURITY_LOGS"``)
+    identifiers, and rejects every schema-qualified form (``SYS.USERS``,
+    ``"SYS"."USERS"``, mixed quoting) so the agent cannot reach HANA's
+    catalog tables.
+    """
     scrubbed = _sql_for_scope_checks(sql)
-    ctes = {m.group(1).upper() for m in _CTE_NAME.finditer(scrubbed)}
+    ctes = {_normalize_ident(m.group(1)) for m in _CTE_NAME.finditer(scrubbed)}
     refs: list[str] = []
     for match in _TABLE_REF.finditer(scrubbed):
-        schema_or_table = match.group(1).upper()
-        table = match.group(2).upper() if match.group(2) else schema_or_table
-        if schema_or_table != table:
+        first = _normalize_ident(match.group(1))
+        second = _normalize_ident(match.group(2)) if match.group(2) else None
+        if second is not None:
             return "schema-qualified table names are not allowed"
-        refs.append(table)
+        refs.append(first)
 
     for table in refs:
         if table in ctes:
