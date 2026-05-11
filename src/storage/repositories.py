@@ -25,6 +25,7 @@ import pandas as pd
 from src.common.config import settings
 from src.common.logging import get_logger
 from src.common.time_utils import utcnow
+from src.model.schema import LLM_LOG_TYPES
 from src.storage.pool import HanaPool, pool
 
 logger = get_logger(__name__)
@@ -32,6 +33,12 @@ logger = get_logger(__name__)
 # ─── Constants ─────────────────────────────────────────────────────────────
 
 LOG_INSERT_BATCH_SIZE: int = 500
+
+# Sentinel value written to SECURITY_LOGS.SOURCE_IP for LLM telemetry rows,
+# which carry no network identity but whose SOURCE_IP column is NOT NULL.
+# Downstream consumers filter LLM rows by LOG_TYPE (src/model/features.py),
+# so the sentinel never reaches the SAP isolation forest.
+LLM_SOURCE_IP_PLACEHOLDER: str = "__llm__"
 
 
 class BulkInsertResult(int):
@@ -97,23 +104,36 @@ class LogRepository:
         Persist a batch of logs. Returns number of rows written.
 
         Uses ``executemany`` with ``LOG_INSERT_BATCH_SIZE`` chunks for speed.
-        LLM telemetry rows (null/blank source_ip) are skipped — SOURCE_IP is
-        NOT NULL in SECURITY_LOGS and LLM rows carry no network identity.
+
+        LLM telemetry rows have no SOURCE_IP, but SECURITY_LOGS.SOURCE_IP is
+        NOT NULL. We stamp them with ``LLM_SOURCE_IP_PLACEHOLDER`` and persist
+        them so the LLM detector can bootstrap from HANA history. Malformed
+        non-LLM rows with a missing SOURCE_IP are still skipped — they
+        otherwise collapse into a single phantom IP downstream.
         """
         if df.empty:
             return 0
 
-        # LLM rows have no source_ip; SECURITY_LOGS.SOURCE_IP is NOT NULL.
-        # Filter them out before building records to avoid constraint violations.
         if "source_ip" in df.columns:
-            llm_mask = df["source_ip"].isna() | (df["source_ip"].astype(str).str.strip() == "")
-            skipped = int(llm_mask.sum())
+            missing_source = df["source_ip"].isna() | (
+                df["source_ip"].astype(str).str.strip() == ""
+            )
+            if "log_type" in df.columns:
+                llm_mask = df["log_type"].astype(str).str.upper().isin(LLM_LOG_TYPES)
+            else:
+                llm_mask = pd.Series(False, index=df.index)
+            preserve_llm = missing_source & llm_mask
+            if bool(preserve_llm.any()):
+                df = df.copy()
+                df.loc[preserve_llm, "source_ip"] = LLM_SOURCE_IP_PLACEHOLDER
+            skip_mask = missing_source & ~llm_mask
+            skipped = int(skip_mask.sum())
             if skipped:
                 logger.info(
                     "log_repo.skip_null_source_ip",
                     extra={"skipped": skipped, "total": len(df)},
                 )
-            df = df[~llm_mask]
+            df = df[~skip_mask]
 
         if df.empty:
             return 0
