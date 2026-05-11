@@ -36,6 +36,36 @@ the entry and strike through — we want audit trail, not revisionism.
 | Evaluation | `anomaly_rate`, score distribution (`min`, `p10`, `median`, `p90`, `max`, `mean`, `std`), decile gap, 5-fold CV anomaly-rate stability (see `src/model/evaluate.py`) |
 | Known caveat | Rows predating commit `5b5d777` (2026-04-21) have NULLs in 16 columns. `src/model/features.py::feature_matrix` currently applies blanket `.fillna(0)`, silently biasing those rows toward "zero-diversity" profiles. See *Open questions* #1. |
 
+## Model lifecycle limitation — Daily retrain artifact distribution
+
+The active model in the running web app is the **bootstrap model** trained on
+startup from HANA (last 30 days of non-LLM logs) or, in mock mode, from the
+bundled sample CSV. The scheduled `Daily Model Retrain` GitHub Action runs
+`python -m scripts.train_model` inside a Cloud Foundry **task container**,
+which is isolated from the web app's filesystem. The retrained joblib bundles
+live and die with the task container; the running app never sees them.
+
+What the daily retrain currently accomplishes:
+
+- Writes a new row to the HANA `MODEL_VERSIONS` table with the retrain's
+  hyperparameters, training-sample count, and CV metrics — useful for
+  dashboards and historical tracking.
+- Verifies that training-from-HANA still succeeds end-to-end.
+
+What it does **not** do:
+
+- Update the joblib bundle that the live `Pipeline.predict()` path loads.
+
+To pick up the daily retrain's bundle, the app must currently be restarted
+(`cf restart sap-threat-detector`), at which point the on-startup HANA
+bootstrap re-trains on the same data and produces an equivalent (but not
+identical, due to non-determinism in `IsolationForest` sampling) model.
+
+Future work — make retrain artifacts reachable from the web app: either
+(a) persist the joblib bundle as a HANA BLOB column on `MODEL_VERSIONS`
+and have `ModelRegistry.load()` fetch from there, or (b) trigger a
+`cf restage` from the retrain workflow after a successful run.
+
 ---
 
 ## Experiments table
