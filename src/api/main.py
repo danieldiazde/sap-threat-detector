@@ -74,11 +74,37 @@ async def hana_keepalive() -> None:
             logger.warning("hana_keepalive.error", extra={"error": str(exc)})
 
 
+_BOOTSTRAP_FETCH_SQL: str = (
+    "SELECT DATETIME, SOURCE_IP, PORT_SERVICE, EVENT_DESCRIPTION, STATUS, "
+    "LOG_TYPE, REQUEST_PATH, SAP_APPLICATION, REGION_CODE, MACRO_REGION, "
+    "HTTP_METHOD, SAP_SOURCE_TYPE, SAP_APP_ENV "
+    "FROM SECURITY_LOGS "
+    "WHERE INGESTED_AT >= ADD_DAYS(CURRENT_TIMESTAMP, -30) "
+    "AND SOURCE_IP IS NOT NULL AND SOURCE_IP != '' "
+    "AND SOURCE_IP != '__llm__' "
+    "AND (LOG_TYPE IS NULL OR LOG_TYPE NOT LIKE 'LLM\\_%' ESCAPE '\\')"
+)
+
+
 def _bootstrap_model() -> None:
-    """Train an initial model from sample data if no model exists on disk."""
+    """Train an initial SAP detector model if none exists.
+
+    In production (real HANA), trains from the last 30 days of non-LLM logs
+    in ``SECURITY_LOGS``. In mock mode, trains from the bundled sample CSV.
+
+    Logs a warning and returns silently if neither source has usable data;
+    the pipeline tolerates a missing model and will surface a
+    ``ModelNotFoundError`` per cycle until the next ``cf restart``.
+    """
+    if settings.mock_hana:
+        _bootstrap_model_from_csv()
+    else:
+        _bootstrap_model_from_hana()
+
+
+def _bootstrap_model_from_csv() -> None:
     from pathlib import Path
 
-    import pandas as pd
     from src.ingestion.log_parser import normalize_columns
 
     sample_path = Path("data/samples/sample_logs.csv")
@@ -86,15 +112,81 @@ def _bootstrap_model() -> None:
         logger.warning("api.bootstrap_model.no_sample_data", extra={"path": str(sample_path)})
         return
 
-    logger.info("api.bootstrap_model.start", extra={"path": str(sample_path)})
+    logger.info("api.bootstrap_model.from_csv.start", extra={"path": str(sample_path)})
     df = normalize_columns(pd.read_csv(sample_path))
     features_df = extract_features(df)
     if features_df.empty:
-        logger.warning("api.bootstrap_model.no_features")
+        logger.warning("api.bootstrap_model.no_features", extra={"source": "csv"})
         return
 
     report = train_model(features_df)
-    logger.info("api.bootstrap_model.done", extra={"version": report.get("version_tag")})
+    logger.info(
+        "api.bootstrap_model.done",
+        extra={"source": "csv", "version": report.get("version_tag")},
+    )
+
+
+def _bootstrap_model_from_hana() -> None:
+    from hdbcli import dbapi
+    from src.common.cf_proxy import get_hdbcli_proxy_kwargs
+
+    logger.info("api.bootstrap_model.from_hana.start")
+    kwargs: dict = dict(
+        address=settings.hana_host,
+        port=settings.hana_port,
+        user=settings.hana_user,
+        password=settings.hana_password,
+        encrypt=True,
+        sslValidateCertificate=False,
+        **get_hdbcli_proxy_kwargs(),
+    )
+    if settings.hana_database:
+        kwargs["databaseName"] = settings.hana_database
+
+    conn = dbapi.connect(**kwargs)
+    try:
+        cur = conn.cursor()
+        cur.execute(_BOOTSTRAP_FETCH_SQL)
+        cols = [d[0].lower() for d in cur.description]
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    if not rows:
+        logger.warning("api.bootstrap_model.from_hana.no_rows")
+        return
+
+    df = pd.DataFrame(rows, columns=cols)
+    features_df = extract_features(df)
+    if features_df.empty:
+        logger.warning(
+            "api.bootstrap_model.from_hana.no_features",
+            extra={"raw_rows": len(rows)},
+        )
+        return
+
+    report = train_model(features_df)
+    logger.info(
+        "api.bootstrap_model.done",
+        extra={
+            "source": "hana",
+            "raw_rows": len(rows),
+            "version": report.get("version_tag"),
+        },
+    )
+
+
+async def _model_bootstrap() -> None:
+    """Async wrapper: run the sync SAP-detector bootstrap in a thread.
+
+    Errors are logged, not raised — the pipeline tolerates a missing model
+    and the next ``cf restart`` will re-attempt the bootstrap.
+    """
+    try:
+        await asyncio.to_thread(_bootstrap_model)
+    except Exception as exc:
+        logger.error("api.bootstrap_model.failed", extra={"error": str(exc)})
 
 
 def _bootstrap_llm_model() -> None:
@@ -194,9 +286,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception as exc:
         logger.error("api.startup.hana_failed", extra={"error": str(exc)})
 
-    # Bootstrap model if none exists
+    # Bootstrap model if none exists — background so the CF health check is
+    # not delayed by HANA query + IsolationForest fit. The pipeline tolerates
+    # a missing model (predict raises, reset_window_start re-acks the window)
+    # and recovers once the bootstrap task completes.
+    _model_bootstrap_task: asyncio.Task[None] | None = None
     if registry.current_version() is None:
-        await asyncio.to_thread(_bootstrap_model)
+        _model_bootstrap_task = asyncio.create_task(_model_bootstrap(), name="model-bootstrap")
 
     # Pipeline
     _pipeline = Pipeline()
@@ -207,7 +303,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         hana_keepalive(), name="hana-keepalive"
     )
 
-    # LLM bundle bootstrap — background task so the health check passes immediately.
+    # LLM bundle bootstrap — same pattern as the SAP bootstrap above.
     # _safe_predict_llm tolerates a missing bundle (returns empty), so the pipeline
     # runs normally while training completes in the background.
     _llm_bootstrap_task: asyncio.Task[None] | None = None
@@ -232,6 +328,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _llm_bootstrap_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await _llm_bootstrap_task
+    if _model_bootstrap_task is not None and not _model_bootstrap_task.done():
+        _model_bootstrap_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _model_bootstrap_task
     await close_fetcher_client()
     await pool.close()
 
