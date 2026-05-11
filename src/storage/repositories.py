@@ -34,6 +34,32 @@ logger = get_logger(__name__)
 LOG_INSERT_BATCH_SIZE: int = 500
 
 
+class BulkInsertResult(int):
+    """Int-compatible result with duplicate/rejected counters."""
+
+    duplicates: int
+    rejected: int
+
+    def __new__(cls, persisted: int, duplicates: int = 0, rejected: int = 0):
+        obj = int.__new__(cls, persisted)
+        obj.duplicates = duplicates
+        obj.rejected = rejected
+        return obj
+
+    def __iter__(self):
+        yield int(self)
+        yield self.duplicates
+        yield self.rejected
+
+
+def _bulk_result_parts(result: object) -> tuple[int, int, int]:
+    if isinstance(result, BulkInsertResult):
+        return int(result), result.duplicates, result.rejected
+    if isinstance(result, tuple) and len(result) == 3:
+        return int(result[0]), int(result[1]), int(result[2])
+    return int(result), 0, 0
+
+
 def _to_int_or_none(v: object) -> int | None:
     try:
         return int(float(v)) if v is not None and str(v).strip() else None  # type: ignore[arg-type]
@@ -107,13 +133,20 @@ class LogRepository:
         async with self._pool.acquire() as conn:
             if conn is None:
                 return 0
-            persisted = await asyncio.to_thread(self._bulk_insert_sync, conn, records)
+            inserted, duplicates, rejected = _bulk_result_parts(
+                await asyncio.to_thread(self._bulk_insert_sync, conn, records)
+            )
 
         logger.info(
             "log_repo.hana_insert",
-            extra={"rows": persisted, "attempted": len(records)},
+            extra={
+                "rows": inserted,
+                "duplicates": duplicates,
+                "rejected": rejected,
+                "attempted": len(records),
+            },
         )
-        if persisted == 0 and len(records) > 0:
+        if inserted == 0 and duplicates == 0 and len(records) > 0:
             # Every row in a non-empty batch was rejected. Surface this so
             # the pipeline trips reset_window_start() and re-fetches the
             # window on the next cycle, instead of acknowledging a window
@@ -121,7 +154,7 @@ class LogRepository:
             raise RuntimeError(
                 f"log_repo.all_rows_rejected attempted={len(records)}"
             )
-        return persisted
+        return inserted
 
     async def recent_logs(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return the most recent logs (newest first)."""
@@ -226,7 +259,7 @@ class LogRepository:
         "table not found",
     )
 
-    def _bulk_insert_sync(self, conn: Any, records: list[dict[str, Any]]) -> int:
+    def _bulk_insert_sync(self, conn: Any, records: list[dict[str, Any]]) -> BulkInsertResult:
         """Insert *records* in chunks. Returns count of persisted rows.
 
         Re-raises on structural/schema errors so the caller can react —
@@ -234,6 +267,8 @@ class LogRepository:
         """
         rows = [self._row_tuple(r) for r in records]
         persisted = 0
+        duplicates = 0
+        rejected = 0
         cursor = conn.cursor()
         try:
             for i in range(0, len(rows), LOG_INSERT_BATCH_SIZE):
@@ -263,11 +298,13 @@ class LogRepository:
                             msg = str(row_exc).lower()
                             if any(h in msg for h in self._UNIQUE_VIOLATION_HINTS):
                                 # Duplicate LOG_ID — the dedup index is working.
+                                duplicates += 1
                                 logger.info(
                                     "log_repo.dedup_skip",
                                     extra={"log_id": row[0], "source_ip": row[2]},
                                 )
                             else:
+                                rejected += 1
                                 logger.error(
                                     "log_repo.row_skip",
                                     extra={"source_ip": row[2], "error": str(row_exc)},
@@ -275,7 +312,7 @@ class LogRepository:
             conn.commit()
         finally:
             cursor.close()
-        return persisted
+        return BulkInsertResult(persisted, duplicates, rejected)
 
     @staticmethod
     def _query_recent_sync(conn: Any, limit: int) -> list[dict[str, Any]]:
@@ -393,6 +430,14 @@ class AnomalyRepository:
                 ),
             )
             conn.commit()
+        except Exception as exc:
+            if "unique" in str(exc).lower() or "duplicate key" in str(exc).lower():
+                logger.info(
+                    "anomaly_repo.duplicate_skip",
+                    extra={"alert_id": record.get("alert_id"), "source_ip": record.get("source_ip")},
+                )
+                return
+            raise
         finally:
             cursor.close()
 

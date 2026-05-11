@@ -116,6 +116,7 @@ async def send_alert(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> 
     False if a real send attempt failed.
     """
     if not deduper.should_fire(anomaly_row):
+        anomaly_row["_alert_suppressed"] = True
         metrics.incr_alerts_suppressed()
         logger.info(
             "webhook.suppressed",
@@ -126,6 +127,7 @@ async def send_alert(anomaly_row: dict[str, Any], evidence_df: pd.DataFrame) -> 
         )
         return True
 
+    anomaly_row["_alert_suppressed"] = False
     message = format_alert_message(anomaly_row, evidence_df)
     payload = {"message": message}
 
