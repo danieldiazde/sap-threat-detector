@@ -48,7 +48,13 @@ jobs:
           cf set-env sap-threat-detector HANA_USER "${{ secrets.HANA_USER }}"
           cf set-env sap-threat-detector HANA_PASSWORD "${{ secrets.HANA_PASSWORD }}"
           cf set-env sap-threat-detector SAP_WEBHOOK_URL "${{ secrets.SAP_WEBHOOK_URL }}"
-          cf set-env sap-threat-detector SAP_WEBHOOK_SECRET "${{ secrets.SAP_WEBHOOK_SECRET }}"
+          # Protect /agent/* in production. Expected bearer falls back to
+          # SAP_API_KEY when AGENT_API_TOKEN is unset, so no extra secret needed.
+          cf set-env sap-threat-detector AGENT_AUTH_REQUIRED "true"
+          # SAP_WEBHOOK_SECRET was used by an earlier HMAC-signed webhook path.
+          # The current /alert spec accepts Bearer only, so the secret is unused.
+          # Clear it from the CF env in case a prior deploy set it.
+          cf unset-env sap-threat-detector SAP_WEBHOOK_SECRET || true
 
       - name: Start application
         run: cf start sap-threat-detector
