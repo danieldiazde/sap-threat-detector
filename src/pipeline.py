@@ -94,7 +94,12 @@ class Pipeline:
 
             # DETECT — SAP detector (per-source-IP) + LLM detector (per-cohort).
             batch_min_log_time = _earliest_log_time(df)
-            sap_scored = predict(features_df, ingested_at=ingested_at, batch_min_log_time=batch_min_log_time)
+            sap_scored = predict(
+                features_df,
+                ingested_at=ingested_at,
+                batch_min_log_time=batch_min_log_time,
+                raw_log_df=df,
+            )
             sap_anomalies = anomalies_only(sap_scored)
             sap_anomalies = sap_anomalies.assign(detector="sap") if not sap_anomalies.empty else sap_anomalies
 

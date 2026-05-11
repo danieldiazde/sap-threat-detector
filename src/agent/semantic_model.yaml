@@ -212,11 +212,11 @@ tables:
         nullable: true
         meaning: Error rate of the window that triggered the anomaly (0.0–1.0).
       - name: PIPELINE_MTTD_MS
-        type: INTEGER
+        type: BIGINT
         nullable: true
         meaning: Internal MTTD — DETECTED_AT minus INGESTED_AT, in ms.
       - name: E2E_MTTD_MS
-        type: INTEGER
+        type: BIGINT
         nullable: true
         meaning: End-to-end MTTD — DETECTED_AT minus the log's own DATETIME, in ms. Real-world MTTD.
       - name: ALERT_ID

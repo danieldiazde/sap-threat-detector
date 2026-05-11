@@ -97,7 +97,7 @@ For each `source_ip` in a configurable context window, the feature
 matrix collects 17 numeric features:
 
 `total_requests`, `error_rate`, `post_ratio`, `unique_paths`,
-`status_4xx_count`, `status_5xx_count`, `denied_ratio`,
+`status_4xx_ratio`, `status_5xx_ratio`, `denied_ratio`,
 `suspicious_path_ratio`, `is_destructive_ratio`, `sql_injection_hits`,
 `brute_force_score`, `port_diversity`, `app_diversity`,
 `region_diversity`, `interarrival_std`, `interarrival_mean`,
