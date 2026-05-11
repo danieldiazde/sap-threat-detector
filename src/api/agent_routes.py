@@ -23,17 +23,47 @@ API.
 
 from __future__ import annotations
 
+import hmac
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from src.agent.tools import dispatch
 from src.alerting.sap_webhook import post_alert_message
+from src.common.config import settings
 from src.common.logging import get_logger
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+
+
+def _expected_agent_token() -> str:
+    return settings.agent_api_token or settings.sap_api_key
+
+
+def _require_agent_auth(authorization: str | None = Header(default=None)) -> None:
+    """Protect agent HTTP routes in deployed environments.
+
+    Local/mock development stays open unless AGENT_AUTH_REQUIRED=true or an
+    AGENT_API_TOKEN/SAP_API_KEY is configured.
+    """
+    expected = _expected_agent_token()
+    auth_required = settings.agent_auth_required or bool(settings.agent_api_token)
+    if not auth_required:
+        return
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="agent_auth_not_configured",
+        )
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(token, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="unauthorized",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 class ToolCallRequest(BaseModel):
@@ -57,7 +87,10 @@ class PostAlertRequest(BaseModel):
 
 
 @router.post("/tool", response_model=ToolCallResponse)
-async def tool_endpoint(req: ToolCallRequest) -> ToolCallResponse:
+async def tool_endpoint(
+    req: ToolCallRequest,
+    _auth: None = Depends(_require_agent_auth),
+) -> ToolCallResponse:
     """Dispatch one agent tool by name and return its structured result.
 
     ``ok`` is False when the dispatcher returned an error envelope (unknown
@@ -74,7 +107,10 @@ async def tool_endpoint(req: ToolCallRequest) -> ToolCallResponse:
 
 
 @router.post("/post_alert")
-async def post_alert_endpoint(req: PostAlertRequest) -> dict[str, Any]:
+async def post_alert_endpoint(
+    req: PostAlertRequest,
+    _auth: None = Depends(_require_agent_auth),
+) -> dict[str, Any]:
     """Send a pre-formatted alert. Called only after analyst confirmation."""
     result = await post_alert_message(req.message)
     logger.info(

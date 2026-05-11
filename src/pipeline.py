@@ -140,8 +140,9 @@ class Pipeline:
                     anomaly_dict["incident_report_path"] = report_path
 
                 sent = await send_alert(anomaly_dict, evidence)
-                anomaly_dict["webhook_sent"] = sent
-                if sent:
+                suppressed = bool(anomaly_dict.pop("_alert_suppressed", False))
+                anomaly_dict["webhook_sent"] = bool(sent and not suppressed)
+                if sent and not suppressed:
                     alerts_sent += 1
 
                 await anomaly_repository.insert_anomaly(anomaly_dict)

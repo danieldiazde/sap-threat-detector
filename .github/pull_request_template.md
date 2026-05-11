@@ -10,7 +10,7 @@
 
 ## Scope checks
 
-- [ ] Updated `CLAUDE.md` if this PR changes a convention, key file, or workflow
+- [ ] Updated `docs/ARCHITECTURE.md` if this PR changes a convention, key file, or workflow
 - [ ] Updated `docs/MODEL_JOURNAL.md` if this PR changes model behavior, features, or hyperparameters
 - [ ] Added an ADR under `docs/adr/` if this PR makes an architectural decision
 - [ ] No new `os.getenv()` outside `src/common/config.py`
