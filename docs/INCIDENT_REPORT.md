@@ -1,4 +1,4 @@
-# 🔍 Incident Report Template
+# Incident Report Template
 **SAP AI Security — Anomaly Detection | TEC Hackathon**
 
 > Fill this out after each detected incident. This is part of the 15% Business Impact grade.

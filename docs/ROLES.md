@@ -1,4 +1,4 @@
-# 👥 Team Roles & Responsibilities
+# Team Roles & Responsibilities
 
 Based on the SAP Hackathon presentation.
 
