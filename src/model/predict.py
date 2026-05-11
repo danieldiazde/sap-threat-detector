@@ -95,6 +95,7 @@ def predict(
     *,
     ingested_at: datetime,
     batch_min_log_time: datetime | None = None,
+    raw_log_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
     Score *features_df* and return a DataFrame with detection columns added.
@@ -104,6 +105,13 @@ def predict(
     expansion-only features are non-zero.  Both models are loaded from the
     registry; the modern model falls back to the legacy model (and vice versa)
     when only one is available on disk.
+
+    MTTD attribution:
+        - ``pipeline_mttd_ms`` = ``detected_at - ingested_at`` (scalar, same on
+          every row).
+        - ``e2e_mttd_ms``: when ``raw_log_df`` is provided, computed per source_ip
+          as ``detected_at - min(log.datetime per source_ip)``. Otherwise falls
+          back to ``batch_min_log_time`` as a single scalar (legacy callers).
 
     Added columns:
         anomaly_score (float), is_anomaly (bool), threat_level (str),
@@ -115,7 +123,15 @@ def predict(
 
     detected_at = utcnow()
     pipeline_mttd = elapsed_ms(ingested_at, detected_at)
-    e2e_mttd = elapsed_ms(batch_min_log_time, detected_at) if batch_min_log_time else None
+    # Per-IP earliest event time → per-anomaly e2e MTTD. Falls back to the
+    # batch-wide minimum only when callers don't supply ``raw_log_df``.
+    min_dt_by_ip: dict[str, datetime] = {}
+    if raw_log_df is not None and not raw_log_df.empty and {"source_ip", "datetime"}.issubset(raw_log_df.columns):
+        valid = raw_log_df[["source_ip", "datetime"]].dropna()
+        if not valid.empty:
+            min_dt_by_ip = (
+                valid.groupby("source_ip")["datetime"].min().to_dict()
+            )
 
     legacy_model, modern_model = _load_models()
     mask = _modern_mask(features_df)
@@ -155,12 +171,23 @@ def predict(
     out["detected_at"] = detected_at
     out["ingested_at"] = ingested_at
     out["pipeline_mttd_ms"] = int(pipeline_mttd)
-    out["e2e_mttd_ms"] = e2e_mttd
+
+    if min_dt_by_ip:
+        def _e2e_for_ip(ip: str) -> int | None:
+            start = min_dt_by_ip.get(ip)
+            return elapsed_ms(start, detected_at) if start is not None else None
+        out["e2e_mttd_ms"] = out["source_ip"].map(_e2e_for_ip)
+    elif batch_min_log_time is not None:
+        out["e2e_mttd_ms"] = elapsed_ms(batch_min_log_time, detected_at)
+    else:
+        out["e2e_mttd_ms"] = None
+
     out["multi_bucket_count"] = out["source_ip"].map(multi_bucket).fillna(0).astype(int)
 
     metrics.observe_pipeline_mttd(pipeline_mttd)
-    if e2e_mttd is not None:
-        metrics.observe_e2e_mttd(e2e_mttd)
+    e2e_observed = out["e2e_mttd_ms"].dropna()
+    if not e2e_observed.empty:
+        metrics.observe_e2e_mttd(int(e2e_observed.mean()))
 
     anomaly_count = int(out["is_anomaly"].sum())
     logger.info(
@@ -169,7 +196,7 @@ def predict(
             "ips_scored": len(out),
             "anomalies": anomaly_count,
             "pipeline_mttd_ms": pipeline_mttd,
-            "e2e_mttd_ms": e2e_mttd,
+            "e2e_mttd_ms_mean": int(e2e_observed.mean()) if not e2e_observed.empty else None,
             "legacy_rows": int((~mask).sum()),
             "modern_rows": int(mask.sum()),
         },

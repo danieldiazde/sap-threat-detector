@@ -170,9 +170,23 @@ def predict_llm(
 
     # Cohort aggregation + rule evaluation.
     pipeline_mttd = elapsed_ms(ingested_at, detected_at)
-    e2e_mttd = elapsed_ms(batch_min_log_time, detected_at) if batch_min_log_time else None
+    # Per-cohort earliest event time → per-cohort e2e MTTD. Fallback to the
+    # batch-wide scalar only when datetime isn't available.
+    if "datetime" in df.columns:
+        cohort_min_dt = (
+            df.dropna(subset=["datetime"])
+            .groupby(["llm_model_id", "llm_prompt_category"], sort=False)["datetime"]
+            .min()
+            .to_dict()
+        )
+    else:
+        cohort_min_dt = {}
+    batch_fallback_e2e = (
+        elapsed_ms(batch_min_log_time, detected_at) if batch_min_log_time else None
+    )
 
     anomaly_rows: list[dict[str, Any]] = []
+    e2e_observations: list[int] = []
     grouped = features.groupby(["llm_model_id", "llm_prompt_category"], sort=False)
     for (model_id, category), cohort_rows in grouped:
         fired = evaluate_cohort(
@@ -182,6 +196,12 @@ def predict_llm(
             profiles=profiles,
             baselines=baselines,
         )
+        cohort_start = cohort_min_dt.get((model_id, category))
+        cohort_e2e_mttd: int | None
+        if cohort_start is not None:
+            cohort_e2e_mttd = elapsed_ms(cohort_start, detected_at)
+        else:
+            cohort_e2e_mttd = batch_fallback_e2e
         anomaly = _maybe_emit_cohort_anomaly(
             cohort_rows=cohort_rows,
             model_id=str(model_id),
@@ -190,15 +210,17 @@ def predict_llm(
             detected_at=detected_at,
             ingested_at=ingested_at,
             pipeline_mttd=pipeline_mttd,
-            e2e_mttd=e2e_mttd,
+            e2e_mttd=cohort_e2e_mttd,
             bundle_version=bundle.metadata.get("version_tag", "unknown"),
         )
         if anomaly is not None:
             anomaly_rows.append(anomaly)
+            if cohort_e2e_mttd is not None:
+                e2e_observations.append(cohort_e2e_mttd)
 
     metrics.observe_pipeline_mttd(pipeline_mttd)
-    if e2e_mttd is not None:
-        metrics.observe_e2e_mttd(e2e_mttd)
+    if e2e_observations:
+        metrics.observe_e2e_mttd(int(sum(e2e_observations) / len(e2e_observations)))
 
     out = pd.DataFrame(anomaly_rows) if anomaly_rows else _empty_output()
 
@@ -209,7 +231,11 @@ def predict_llm(
             "cohorts_examined": int(grouped.ngroups),
             "anomalies_emitted": len(out),
             "pipeline_mttd_ms": pipeline_mttd,
-            "e2e_mttd_ms": e2e_mttd,
+            "e2e_mttd_ms_mean": (
+                int(sum(e2e_observations) / len(e2e_observations))
+                if e2e_observations
+                else None
+            ),
         },
     )
     return out
