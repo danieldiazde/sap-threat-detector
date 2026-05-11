@@ -56,6 +56,9 @@ logger = get_logger(__name__)
 CUSTOM_QUERY_ROW_CAP: int = 20  # plan §1
 CUSTOM_QUERY_TIMEOUT_S: float = 10.0  # plan §10b
 CUSTOM_QUERY_ERROR_MAX: int = 400
+CUSTOM_QUERY_ALLOWED_TABLES: frozenset[str] = frozenset(
+    {"SECURITY_LOGS", "ANOMALIES", "MODEL_VERSIONS"}
+)
 
 # ─── Tool implementations ──────────────────────────────────────────────────
 
@@ -295,6 +298,11 @@ _FORBIDDEN_TOKENS = re.compile(
     r")\b"
 )
 _LIMIT_TRAILING = re.compile(r"(?is)\blimit\s+\d+\s*;?\s*$")
+_SQL_STRING = re.compile(r"'(?:''|[^'])*'")
+_SQL_LINE_COMMENT = re.compile(r"--[^\n\r]*")
+_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_CTE_NAME = re.compile(r"(?is)(?:\bwith\b|,)\s*([A-Za-z_][\w$]*)\s+as\s*\(")
+_TABLE_REF = re.compile(r"(?is)\b(?:from|join)\s+([A-Za-z_][\w$]*)(?:\s*\.\s*([A-Za-z_][\w$]*))?")
 
 
 def _enforce_limit(sql: str, cap: int) -> str:
@@ -320,6 +328,33 @@ def _classify_error(msg: str) -> str | None:
         return "Syntax error — re-check keywords and parentheses."
     if "ambiguous" in low:
         return "Ambiguous column reference — qualify with the table name."
+    return None
+
+
+def _sql_for_scope_checks(sql: str) -> str:
+    no_comments = _SQL_BLOCK_COMMENT.sub(" ", sql)
+    no_comments = _SQL_LINE_COMMENT.sub(" ", no_comments)
+    return _SQL_STRING.sub("''", no_comments)
+
+
+def _validate_query_scope(sql: str) -> str | None:
+    """Return an error if the query touches tables outside the agent allowlist."""
+    scrubbed = _sql_for_scope_checks(sql)
+    ctes = {m.group(1).upper() for m in _CTE_NAME.finditer(scrubbed)}
+    refs: list[str] = []
+    for match in _TABLE_REF.finditer(scrubbed):
+        schema_or_table = match.group(1).upper()
+        table = match.group(2).upper() if match.group(2) else schema_or_table
+        if schema_or_table != table:
+            return "schema-qualified table names are not allowed"
+        refs.append(table)
+
+    for table in refs:
+        if table in ctes:
+            continue
+        if table not in CUSTOM_QUERY_ALLOWED_TABLES:
+            allowed = ", ".join(sorted(CUSTOM_QUERY_ALLOWED_TABLES))
+            return f"table '{table}' is not allowed. Allowed tables: {allowed}"
     return None
 
 
@@ -379,6 +414,13 @@ async def run_custom_query(
             "query_attempted": raw_sql[:200],
             "_render": "raw",
         }
+    scope_error = _validate_query_scope(no_trailing_semi)
+    if scope_error:
+        return {
+            "error": scope_error,
+            "query_attempted": raw_sql[:200],
+            "_render": "raw",
+        }
 
     if count_total:
         executed = f"SELECT COUNT(*) AS total FROM ({no_trailing_semi})"
@@ -395,12 +437,7 @@ async def run_custom_query(
     started = time.monotonic()
     try:
         async def _go() -> dict[str, Any]:
-            async with pool.acquire() as conn:
-                if conn is None:
-                    return {"error": "hana_unavailable", "query_attempted": executed}
-                return await asyncio.to_thread(
-                    _run_select_columns, conn, executed, ()
-                )
+            return await asyncio.to_thread(_run_select_columns_fresh, executed, ())
         result = await asyncio.wait_for(_go(), timeout=CUSTOM_QUERY_TIMEOUT_S)
     except TimeoutError:
         return {
@@ -466,6 +503,36 @@ def _run_select_columns(
         return {"rows": rows, "columns": cols}
     finally:
         cursor.close()
+
+
+def _run_select_columns_fresh(sql: str, params: tuple) -> dict[str, Any]:
+    """Run custom SQL on a short-lived connection.
+
+    The custom-query endpoint has a hard asyncio timeout. A timed-out
+    ``to_thread`` call cannot stop hdbcli mid-flight, so this path deliberately
+    avoids borrowing from the shared pool; a late worker thread cannot return a
+    still-busy connection to other requests.
+    """
+    from hdbcli import dbapi
+    from src.common.cf_proxy import get_hdbcli_proxy_kwargs
+
+    kwargs: dict = dict(
+        address=settings.hana_host,
+        port=settings.hana_port,
+        user=settings.hana_user,
+        password=settings.hana_password,
+        encrypt=True,
+        sslValidateCertificate=False,
+        communicationTimeout=int(CUSTOM_QUERY_TIMEOUT_S * 1000),
+        **get_hdbcli_proxy_kwargs(),
+    )
+    if settings.hana_database:
+        kwargs["databaseName"] = settings.hana_database
+    conn = dbapi.connect(**kwargs)
+    try:
+        return _run_select_columns(conn, sql, params)
+    finally:
+        conn.close()
 
 
 # ─── Dispatcher registry ───────────────────────────────────────────────────

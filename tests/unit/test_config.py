@@ -18,6 +18,7 @@ class TestSettings:
         assert s.mock_hana is True
         assert s.model_type == "isolation_forest"
         assert s.model_contamination == 0.05
+        assert s.agent_auth_required is False
 
     def test_mock_api_false_when_url_set(self):
         with patch.dict(os.environ, {"SAP_API_URL": "https://example.com"}, clear=True):
@@ -56,4 +57,9 @@ class TestSettings:
     def test_invalid_int_raises(self):
         import pytest
         with patch.dict(os.environ, {"HANA_PORT": "abc"}, clear=True), pytest.raises(ValueError, match="not a valid int"):
+            Settings.from_env()
+
+    def test_invalid_bool_raises(self):
+        import pytest
+        with patch.dict(os.environ, {"AGENT_AUTH_REQUIRED": "maybe"}, clear=True), pytest.raises(ValueError, match="not a valid bool"):
             Settings.from_env()

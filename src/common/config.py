@@ -91,6 +91,18 @@ def _env_float(key: str, default: float) -> float:
         raise ValueError(f"Env var {key}={raw!r} is not a valid float") from exc
 
 
+def _env_bool(key: str, default: bool) -> bool:
+    raw = os.getenv(key)
+    if raw is None or raw == "":
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"Env var {key}={raw!r} is not a valid bool")
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable, typed snapshot of application configuration."""
@@ -142,6 +154,8 @@ class Settings:
     anthropic_api_key: str
     agent_model: str
     agent_max_iterations: int
+    agent_api_token: str
+    agent_auth_required: bool
 
     # --- CF Connectivity Service (Cloud Connector proxy) ---
     # Populated from VCAP_SERVICES["connectivity"] when the service is bound.
@@ -246,6 +260,8 @@ class Settings:
             agent_max_iterations=_env_int(
                 "AGENT_MAX_ITERATIONS", DEFAULT_AGENT_MAX_ITERATIONS
             ),
+            agent_api_token=_env_str("AGENT_API_TOKEN"),
+            agent_auth_required=_env_bool("AGENT_AUTH_REQUIRED", False),
             incident_report_dir=Path(
                 _env_str("INCIDENT_REPORT_DIR", "reports/incidents")
             ),
