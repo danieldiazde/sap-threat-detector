@@ -29,16 +29,10 @@ A pipeline diagram source for diagrams.net is at
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  SAPAPI[(SAP Log API)] --> OBSERVE
-  OBSERVE[OBSERVE<br/>ingestion] --> ANALYZE[ANALYZE<br/>features]
-  ANALYZE --> DETECT[DETECT<br/>Isolation Forest<br/>+ LLM detector]
-  DETECT --> RESPOND[RESPOND<br/>SAP webhook]
-  OBSERVE -.persist.-> HANA[(HANA Cloud)]
-  DETECT -.persist.-> HANA
-  DETECT -.metrics.-> DASH[Streamlit dashboard]
-```
+![Architecture](docs/architecture-diagram.png)
+
+Source: [`docs/architecture.drawio`](docs/architecture.drawio) (open at
+[diagrams.net](https://app.diagrams.net) to edit).
 
 Deployed as a single Cloud Foundry application on SAP BTP. The
 FastAPI web process hosts the asyncio pipeline as a background task
