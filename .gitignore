@@ -81,3 +81,9 @@ Thumbs.db
 .idea/
 *.iml
 *:Zone.Identifier
+
+# ===========================
+# Local agent / IDE configs
+# ===========================
+.claude/
+MEMORY.md
