@@ -159,6 +159,38 @@ def test_run_custom_query_rejects_schema_qualified_table(mock_hana):
     assert "schema-qualified" in out["error"]
 
 
+def test_run_custom_query_rejects_quoted_schema_qualified_table(mock_hana):
+    out = _run(run_custom_query('SELECT * FROM "SYS"."USERS"'))
+    assert "error" in out
+    assert "schema-qualified" in out["error"]
+
+
+def test_run_custom_query_rejects_quoted_unlisted_table(mock_hana):
+    out = _run(run_custom_query('SELECT * FROM "USERS"'))
+    assert "error" in out
+    assert "not allowed" in out["error"]
+
+
+def test_run_custom_query_rejects_mixed_quote_schema_qualified(mock_hana):
+    # First identifier quoted, second bare.
+    out = _run(run_custom_query('SELECT * FROM "SYS".USERS'))
+    assert "error" in out
+    assert "schema-qualified" in out["error"]
+    # Bare first, quoted second.
+    out2 = _run(run_custom_query('SELECT * FROM SYS."USERS"'))
+    assert "error" in out2
+    assert "schema-qualified" in out2["error"]
+
+
+def test_run_custom_query_accepts_quoted_allowed_table(mock_hana):
+    # Quoted allowed table must pass the scope check (it may still error later
+    # for an unrelated reason, but the error should not mention scope).
+    out = _run(run_custom_query('SELECT * FROM "SECURITY_LOGS"'))
+    err = (out or {}).get("error", "")
+    assert "not allowed" not in err
+    assert "schema-qualified" not in err
+
+
 # ─── Error sanitization + classifier ───────────────────────────────────────
 
 
