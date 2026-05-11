@@ -90,25 +90,13 @@ def test_run_custom_query_count_total_executed_sql_has_count_wrapper():
     # path -- but we want to inspect the executed SQL. Use a custom hook:
     captured: dict[str, str] = {}
 
-    async def fake_to_thread(fn, conn, sql, params):
+    async def fake_to_thread(fn, sql, params):
         captured["sql"] = sql
         return {"rows": [{"total": 7}], "columns": ["total"]}
 
-    class _Conn:
-        pass
-
-    class _Acquire:
-        async def __aenter__(self):
-            return _Conn()
-
-        async def __aexit__(self, *a):
-            return False
-
     with patch.object(tools_mod, "settings") as s, \
-            patch.object(tools_mod, "pool") as pool_mock, \
             patch.object(tools_mod.asyncio, "to_thread", side_effect=fake_to_thread):
         s.mock_hana = False
-        pool_mock.acquire.return_value = _Acquire()
         out = _run(run_custom_query("SELECT 1 FROM ANOMALIES", count_total=True))
 
     assert captured["sql"].startswith("SELECT COUNT(*) AS total FROM (")
@@ -157,6 +145,18 @@ def test_run_custom_query_accepts_with_cte(mock_hana):
 def test_run_custom_query_rejects_empty(mock_hana):
     out = _run(run_custom_query("   "))
     assert out["error"] == "empty_query"
+
+
+def test_run_custom_query_rejects_unlisted_table(mock_hana):
+    out = _run(run_custom_query("SELECT * FROM USERS"))
+    assert "error" in out
+    assert "not allowed" in out["error"]
+
+
+def test_run_custom_query_rejects_schema_qualified_table(mock_hana):
+    out = _run(run_custom_query("SELECT * FROM SYS.USERS"))
+    assert "error" in out
+    assert "schema-qualified" in out["error"]
 
 
 # ─── Error sanitization + classifier ───────────────────────────────────────
