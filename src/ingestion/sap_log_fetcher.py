@@ -55,7 +55,7 @@ def _get_client() -> httpx.AsyncClient:
         proxy_url = get_httpx_proxy_url()
         _client = httpx.AsyncClient(
             timeout=HTTP_TIMEOUT_SECONDS,
-            proxies={"https://": proxy_url, "http://": proxy_url} if proxy_url else None,
+            proxy=proxy_url,
         )
     return _client
 
@@ -343,8 +343,28 @@ def _fetch_mock_logs() -> pd.DataFrame:
     """Load the sample CSV and normalize it to the canonical schema."""
     if not MOCK_DATA_PATH.exists():
         logger.warning("fetcher.mock.missing", extra={"path": str(MOCK_DATA_PATH)})
-        return pd.DataFrame()
+        return _stamp_ingested_at(pd.DataFrame(_FALLBACK_MOCK_ROWS))
 
     df = pd.read_csv(MOCK_DATA_PATH)
     df = normalize_columns(df)
     return _stamp_ingested_at(df)
+
+
+_FALLBACK_MOCK_ROWS: tuple[dict[str, str], ...] = (
+    {
+        "datetime": "2026-04-04 14:00:00",
+        "source_ip": "10.10.1.1",
+        "port_service": "TCP/80",
+        "event_description": "GET /index.html HTTP/1.1",
+        "status": "200",
+        "log_type": "access",
+    },
+    {
+        "datetime": "2026-04-04 14:01:00",
+        "source_ip": "203.0.113.99",
+        "port_service": "TCP/22",
+        "event_description": "Failed login attempt: user root",
+        "status": "DENIED",
+        "log_type": "security",
+    },
+)
