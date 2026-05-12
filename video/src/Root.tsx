@@ -8,7 +8,7 @@ import { FPS, WIDTH, HEIGHT } from './constants';
 loadInter();
 loadJetBrains();
 
-export const RemotionRoot: React.FC = () => {
+export const Root: React.FC = () => {
   return (
     <Composition
       id="MainVideo"
