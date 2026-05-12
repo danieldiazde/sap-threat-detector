@@ -1,0 +1,24 @@
+{
+  "name": "sap-threat-detector-video",
+  "version": "1.0.0",
+  "description": "Remotion presentation video for TPs_data hackathon",
+  "private": true,
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion render MainVideo out/MainVideo.mp4",
+    "render-preview": "remotion render MainVideo out/preview.mp4 --scale=0.5 --jpeg-quality=80"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.290",
+    "@remotion/google-fonts": "4.0.290",
+    "@remotion/player": "4.0.290",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.290"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.4.5"
+  }
+}
