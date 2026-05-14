@@ -159,6 +159,17 @@ def _bootstrap_model_from_hana() -> None:
 
     df = pd.DataFrame(rows, columns=cols)
     features_df = extract_features(df)
+
+    from src.model.train import _modern_mask
+    modern_mask = _modern_mask(features_df)
+    dropped = int((~modern_mask).sum())
+    features_df = features_df[modern_mask]
+    logger.info("api.bootstrap_model.modern_filter",
+        extra={"kept": len(features_df), "dropped": dropped})
+    if features_df.empty:
+        logger.warning("api.bootstrap_model.no_modern_rows")
+        return
+
     if features_df.empty:
         logger.warning(
             "api.bootstrap_model.from_hana.no_features",
