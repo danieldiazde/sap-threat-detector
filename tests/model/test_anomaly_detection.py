@@ -124,3 +124,33 @@ class TestMTTDCalculation:
         assert "e2e_mttd_ms" in scored.columns
         assert (scored["pipeline_mttd_ms"] >= 0).all()
         assert scored["e2e_mttd_ms"].iloc[0] is not None
+
+    @pytest.mark.parametrize("as_string", [False, True])
+    def test_predict_accepts_raw_log_datetime_shapes(
+        self, mixed_logs_df, tmp_model_registry, as_string
+    ):
+        """Per-IP e2e MTTD accepts both parsed datetimes and raw timestamp strings."""
+        from src.model.predict import predict, reset_active_model
+        from src.model.train import train
+
+        logs = mixed_logs_df.copy()
+        features_df = extract_features(logs)
+        raw_log_df = logs[["source_ip", "datetime"]].copy()
+        raw_log_df["datetime"] = pd.to_datetime(raw_log_df["datetime"], utc=True)
+        if as_string:
+            raw_log_df["datetime"] = raw_log_df["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("src.model.train.registry", tmp_model_registry)
+            mp.setattr("src.model.predict.registry", tmp_model_registry)
+            train(features_df)
+            reset_active_model()
+
+            scored = predict(
+                features_df,
+                ingested_at=datetime(2026, 4, 4, 14, 0, 0, tzinfo=UTC),
+                raw_log_df=raw_log_df,
+            )
+
+        assert "e2e_mttd_ms" in scored.columns
+        assert scored["e2e_mttd_ms"].notna().all()
