@@ -36,7 +36,11 @@ help:
 # ─── Environment ───────────────────────────────────────────────────────────
 
 install:
-	pip install -r requirements-dev.txt
+	@if command -v uv >/dev/null 2>&1; then \
+	    uv pip install -r requirements-dev.txt; \
+	else \
+	    python -m pip install -r requirements-dev.txt; \
+	fi
 
 lint:
 	ruff check src/ tests/ scripts/
