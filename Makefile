@@ -4,6 +4,7 @@
 # Prefer local venv binaries when the venv exists. No-op when binaries are
 # already on PATH (e.g. inside a CI container).
 VENV_BIN := $(CURDIR)/.venv/bin
+PYTHON := $(if $(wildcard $(VENV_BIN)/python),$(VENV_BIN)/python,python3)
 export PATH := $(VENV_BIN):$(PATH)
 
 # Make `from src.*` imports work regardless of how the script is launched
@@ -76,10 +77,10 @@ run:
 pipeline: run
 
 api:
-	uvicorn src.api.main:app --reload
+	$(PYTHON) -m uvicorn src.api.main:app --reload
 
 dashboard:
-	streamlit run src/dashboard/app.py
+	$(PYTHON) -m streamlit run src/dashboard/app.py
 
 # ─── Housekeeping ──────────────────────────────────────────────────────────
 
