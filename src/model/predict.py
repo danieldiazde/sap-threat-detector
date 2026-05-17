@@ -27,7 +27,7 @@ import pandas as pd
 from src.common.config import settings
 from src.common.logging import get_logger
 from src.common.metrics import metrics
-from src.common.time_utils import elapsed_ms, utcnow
+from src.common.time_utils import elapsed_ms, parse_log_datetime, utcnow
 from src.model.features import feature_matrix
 from src.model.schema import FEATURE_COLUMNS, FEATURE_COLUMNS_LEGACY
 from src.model.versioning import LoadedModel, ModelNotFoundError, registry
@@ -127,7 +127,9 @@ def predict(
     # batch-wide minimum only when callers don't supply ``raw_log_df``.
     min_dt_by_ip: dict[str, datetime] = {}
     if raw_log_df is not None and not raw_log_df.empty and {"source_ip", "datetime"}.issubset(raw_log_df.columns):
-        valid = raw_log_df[["source_ip", "datetime"]].dropna()
+        valid = raw_log_df[["source_ip", "datetime"]].dropna().copy()
+        valid["datetime"] = valid["datetime"].map(parse_log_datetime)
+        valid = valid.dropna(subset=["datetime"])
         if not valid.empty:
             min_dt_by_ip = (
                 valid.groupby("source_ip")["datetime"].min().to_dict()
